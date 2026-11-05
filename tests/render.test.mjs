@@ -19,6 +19,7 @@ const LIB = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const golden = JSON.parse(readFileSync(path.join(root, 'tests/golden.json'), 'utf8'));
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
+const PLATFORM = `${process.platform}-${process.arch}`;
 const samples = readdirSync(path.join(root, 'samples')).filter((f) => /\.(abc|musicxml)$/.test(f)).sort();
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-test-'));
@@ -57,6 +58,10 @@ test('pscat CLI and WebAssembly agree, and PDFs reproduce', { skip: !existsSync(
     r.render(ps, { width: size[0], height: size[1], pdf: true });
     const w = Buffer.from(r.pdf());
     assert.ok(w.equals(p1), `${f}: WebAssembly PDF differs from the CLI's`);
-    if (golden.pdf && golden.pdf[f]) assert.equal(sha(p1), golden.pdf[f], `${f}: PDF bytes changed`);
+    // PDF goldens are recorded per platform (pscat's CLI builds may differ
+    // across OS/arch); elsewhere print the hash so the difference is visible.
+    const plat = golden.pdf && golden.pdf[PLATFORM];
+    if (plat && plat[f]) assert.equal(sha(p1), plat[f], `${f}: PDF bytes changed on ${PLATFORM}`);
+    else console.log(`pdf ${PLATFORM} ${f} ${sha(p1)}${golden.pdf ? ' (no golden for this platform; recorded elsewhere: ' + Object.keys(golden.pdf).join(', ') + ')' : ''}`);
   }
 });

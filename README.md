@@ -16,9 +16,11 @@ ABC / MusicXML ──parse──▶ score model ──layout──▶ PostScript
 ```
 
 - **Deterministic.** Durations are exact rationals; every coordinate is written
-  with fixed precision. The same input gives the same PostScript bytes in Node
-  and in every browser, and pscat turns it into the same PDF bytes, whether
-  through the command-line tool or its WebAssembly build. `npm test` checks all three.
+  with fixed precision, with no locale or clock involved. The same input gives
+  the same PostScript bytes (`npm test` holds golden hashes; the editor's
+  output was checked against them in Chrome), and pscat turns it into the same
+  PDF bytes through the command-line tool or its WebAssembly build
+  (`npm test` checks that parity and run-to-run reproducibility on every sample).
 - **No music font.** Clefs, noteheads, rests, accidentals, flags, ties and the brace
   are PostScript paths in [`lib/sm_engrave.ps`](lib/sm_engrave.ps). Text uses
   only the PostScript standard 35 fonts that every pscat build has.

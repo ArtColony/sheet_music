@@ -10,12 +10,14 @@
     "twinkle.abc": "89644208cfb7b19245e057cb5cfb8eb954357de8cd665797c961d3601aa9c653"
   },
   "pdf": {
-    "amazing-grace.abc": "d7b76448b54e53867788a340850c5b39c3f201a8eade33554ec39ff4c307269b",
-    "drunken-sailor.abc": "0ef3e25c77370dd20730aa2e6a487b3c20d93f5ae30491016704b3afafc1ac9c",
-    "feature-tour.abc": "4bc46d820536037b63a829b17e2f086e7b287bc1e6a90b8485d4dcf12492bb61",
-    "frere-jacques.musicxml": "f25221eba9132aed26440adfebf18f6cc04f55033fcaad5ef37c466e945ece3c",
-    "greensleeves.abc": "62525bfd0b460efaf24273bbe540367971a4ac6b3c0b4bc59a7dab73ce9b2fda",
-    "ode-to-joy.abc": "4679594ccc27dc8f4fead3cb98a17868a9a125693612792215582ce61d332f6c",
-    "twinkle.abc": "c19d8598692a11934d948e6d96297801713d9ee039990f737e9cdd4e2dad81ba"
+    "darwin-arm64": {
+      "amazing-grace.abc": "d7b76448b54e53867788a340850c5b39c3f201a8eade33554ec39ff4c307269b",
+      "drunken-sailor.abc": "0ef3e25c77370dd20730aa2e6a487b3c20d93f5ae30491016704b3afafc1ac9c",
+      "feature-tour.abc": "4bc46d820536037b63a829b17e2f086e7b287bc1e6a90b8485d4dcf12492bb61",
+      "frere-jacques.musicxml": "f25221eba9132aed26440adfebf18f6cc04f55033fcaad5ef37c466e945ece3c",
+      "greensleeves.abc": "62525bfd0b460efaf24273bbe540367971a4ac6b3c0b4bc59a7dab73ce9b2fda",
+      "ode-to-joy.abc": "4679594ccc27dc8f4fead3cb98a17868a9a125693612792215582ce61d332f6c",
+      "twinkle.abc": "c19d8598692a11934d948e6d96297801713d9ee039990f737e9cdd4e2dad81ba"
+    }
   }
 }

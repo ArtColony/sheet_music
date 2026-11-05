@@ -14,15 +14,24 @@ const LIB = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-golden-'));
+const PLATFORM = `${process.platform}-${process.arch}`;
+let old = {};
+try { old = JSON.parse(readFileSync(path.join(root, 'tests/golden.json'), 'utf8')); } catch { /* first run */ }
 const out = { pscat: readFileSync(path.join(root, '.pscat-version'), 'utf8').trim(), ps: {}, pdf: {} };
+const pdfs = {};
 for (const f of readdirSync(path.join(root, 'samples')).filter((x) => /\.(abc|musicxml)$/.test(x)).sort()) {
   const { ps, size } = toPostScript(readFileSync(path.join(root, 'samples', f), 'utf8'), { lib: LIB });
   out.ps[f] = sha(ps);
   const psFile = path.join(tmp, 'a.ps');
   writeFileSync(psFile, ps);
   execFileSync(PSCAT, ['--page', `${Math.round(size[0])}x${Math.round(size[1])}`, '--pdf', path.join(tmp, 'a.pdf'), psFile], { stdio: 'pipe' });
-  out.pdf[f] = sha(readFileSync(path.join(tmp, 'a.pdf')));
+  pdfs[f] = sha(readFileSync(path.join(tmp, 'a.pdf')));
 }
 rmSync(tmp, { recursive: true, force: true });
+// PDF hashes are kept per platform; other platforms' entries are dropped when
+// the PostScript changed (they no longer describe this output).
+const psSame = old.ps && JSON.stringify(old.ps) === JSON.stringify(out.ps);
+if (psSame && old.pdf) for (const [k, v] of Object.entries(old.pdf)) if (typeof v === 'object') out.pdf[k] = v;
+out.pdf[PLATFORM] = pdfs;
 writeFileSync(path.join(root, 'tests/golden.json'), JSON.stringify(out, null, 2) + '\n');
 console.log(`tests/golden.json: ${Object.keys(out.ps).length} samples`);
