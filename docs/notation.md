@@ -39,8 +39,10 @@ page lists what is drawn. Anything else is skipped, usually with a warning
 | Text | `\'e` `\"o` `\ss` … | Latin accented letters, composed from accent glyphs |
 | Annotations | `%%annotation page=1 type=text x=120 y=540 color=red text="breathe"` | a reader's marks at page positions (points from the lower left): `type=text`, `circle` or `highlight` (with `w=` `h=`); colours `red blue green orange purple yellow black` or `#rrggbb`. The editor's *Annotate* tool writes these lines; in MusicXML they live in `<!-- %%annotation ... -->` comments. Highlights are drawn under the music. Positions are fixed on the page: changing paper, staff size or line breaks reflows the music but not the marks |
 
+| Transposition | `%%transpose -2` | semitones, in the tune or the file header (before the first `X:`); the CLI's `--transpose` and the editor's menu add to it. The new key is the one with the fewest accidentals; notes, key changes and chord symbols are respelled in it |
+
 **Not yet:** two voices on one staff (`&`, `%%score (1 2)`), macros (`m:`, `U:`),
-`%%` formatting directives other than `%%score`, transposition, lyrics that
+`%%` formatting directives other than `%%score`, `%%transpose` and `%%annotation`, lyrics that
 wrap mid-line, cross-staff beams, courtesy key/time signatures at line ends.
 
 ## MusicXML subset

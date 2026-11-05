@@ -19,6 +19,7 @@ time or a workaround; **low** = papercut.
 | 6 | cli | low | `--png` names pages `NAME-001.png`, `NAME-002.png` … for a multi-page document but `NAME.png` for one page, so a caller must know the page count to find the files (`scripts/build-site.mjs` does). | not filed |
 | 7 | tooling | low | The session's pscat MCP plugin was at 0.7.0-rc.1 while the latest release was rc.4, so its quick renders can differ from the pinned CLI. This project pins rc.4 in `pscat.lock.json`, and `.mcp.json` points at the vendored `pscat-mcp`. | not filed |
 | 8 | cli | low | `pscat --png out/x.png` fails if `out/` does not exist (`No such file or directory`); scripts must `mkdir -p` first. Ordinary for a CLI, noted for completeness. | not filed |
+| 9 | pdf | medium | `pdfmark` is undefined, so a program cannot set `/Subject`/`/Keywords`, write a non-ASCII title, or attach a file to the PDF (pscat does copy DSC `%%Title:`/`%%For:` into `/Title`/`/Author`). Workaround: `src/pdfmeta.js` appends a PDF incremental update with the source attachment and info after pscat writes the file. | [#1032](https://github.com/PSCatLabs/pscat/issues/1032) ([draft](issues/06-pdfmark.md)) |
 
 ## What worked well
 

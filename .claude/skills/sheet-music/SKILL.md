@@ -106,9 +106,21 @@ rights to. Write your own transcription; don't copy someone else's edition.
 Record provenance in `S:` / `Z:`; samples added to this repo also go in
 `samples/SOURCES.md` (CC0).
 
+## Transposing, listening, round-tripping
+
+- `--transpose N` (semitones) or a `%%transpose N` line prints the tune in
+  another key, respelled with the fewest accidentals, chord symbols included.
+  Written pitch for transposing instruments: B♭ clarinet/trumpet `+2`, E♭ alto
+  sax `+9`, F horn `+7`; an octave for bass instruments `-12`.
+- Check pitches by ear or by numbers: `performanceOf(text, { transpose })`
+  from `src/index.js` lists every sounded note (MIDI numbers, exact times,
+  repeats played out); `midiFile(perf)` writes a `.mid`.
+- PDFs written here carry their source: `node bin/sheet.mjs score.pdf -o
+  score.abc` gets it back. Edit that, not a retyped copy.
+
 ## Other ways in
 
-- **Editor:** `npm run build && npm run serve`, then open http://localhost:8765/editor.html: live preview, PDF download.
+- **Editor:** `npm run build && npm run serve`, then open http://localhost:8765/editor.html: live preview, transpose, play, share links, PDF/MIDI download.
 - **JavaScript:** `toPostScript(text, { lib })` from `src/index.js` returns `{ ps, pages, size, warnings }`.
 - **MusicXML:** `node bin/sheet.mjs piece.musicxml` (uncompressed, partwise).
 - **pscat MCP tools**, if connected: `render_postscript` on the `.ps` file is a

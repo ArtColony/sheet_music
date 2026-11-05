@@ -38,8 +38,19 @@ node bin/sheet.mjs song.musicxml --engine wasm -o song.pdf  # same PDF, via WebA
 ```
 
 Options: `--tune N` (files with several `X:` tunes; `--list` shows them),
+`--transpose N` (semitones; e.g. `+2` for a B♭ instrument, `+9` alto sax),
 `--paper letter|a4`, `--staff-space PT` (default 5.5), `--breaks source|auto`
-(keep the input's line breaks, or fill lines), `--footer TEXT`.
+(keep the input's line breaks, or fill lines), `--footer TEXT`, `--no-source`.
+
+**PDFs carry their source.** Each PDF has the ABC or MusicXML it was engraved
+from attached (any PDF reader lists it, marked as the document's source), and
+its title, composer and subject in the document info. So a PDF is also an
+input: `node bin/sheet.mjs score.pdf -o score.abc` unpacks the source,
+`node bin/sheet.mjs score.pdf --transpose 2 -o in-d.pdf` re-engraves it, and
+the editor's *Open* reads it back. pscat has no `pdfmark`
+([#1032](https://github.com/PSCatLabs/pscat/issues/1032)), so
+[`src/pdfmeta.js`](src/pdfmeta.js) appends this as a standard PDF incremental
+update; the pages pscat drew are untouched and the output stays deterministic.
 
 From JavaScript:
 
@@ -56,7 +67,12 @@ const { ps, pages, size, warnings } = toPostScript(abcText, { lib, paper: 'a4' }
 (`dist/editor.html`) that inlines the engraver, the glyph library, the samples
 and pscat's JavaScript glue, and loads `pscat.wasm` from beside it. It renders
 as you type, shows parse warnings and PostScript errors, and downloads the
-source, the PostScript or a PDF. **Annotate** adds a reader's marks (text
+source, the PostScript, a MIDI file or a PDF. **Transpose** moves the score up
+or down (respelled in the new key, chord symbols too). **Play** plays it in the
+browser, with repeats, endings and ties (space bar). **Share link** copies a
+link with the whole score compressed into the part after `#`, so nothing is
+uploaded and anyone with the link sees the same score. **Open** (or drop a
+file) reads `.abc`, `.musicxml`, or a PDF made here. **Annotate** adds a reader's marks (text
 notes, circles, highlights) by clicking or dragging on the score; they are
 saved as `%%annotation` lines in the source, so they appear in the PDF and in
 `bin/sheet.mjs` output too. `dist/sheet-music-editor-offline.html` also

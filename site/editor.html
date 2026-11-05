@@ -64,6 +64,8 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; mi
 .annots li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
 .annots .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .annots button { padding: 0 6px; font-size: 12px; line-height: 18px; }
+.dropping .preview { outline: 3px dashed var(--accent); outline-offset: -12px; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; box-shadow: var(--shadow); z-index: 10; }
 .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
 details.help { border-top: 1px solid var(--line); }
 details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -89,6 +91,7 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
     <label class="ctl" id="tune-wrap" hidden>Tune <select id="tune"></select></label>
     <label class="ctl">Paper <select id="paper"><option value="letter">Letter</option><option value="a4">A4</option></select></label>
     <label class="ctl">Size <input id="size" type="range" min="4" max="8" step="0.25" value="5.5" aria-label="Staff size"></label>
+    <label class="ctl">Transpose <select id="transpose" title="Semitones up or down; spelling follows the new key"></select></label>
     <label class="ctl">Lines <select id="breaks"><option value="source">as written</option><option value="auto">fill width</option></select></label>
     <span class="annot-tools" role="group" aria-label="Annotate">
       <label class="ctl">Annotate <select id="tool" title="Click the score to add a note; drag for a circle or highlight">
@@ -97,7 +100,12 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
     </span>
     <span class="spacer"></span>
     <span class="actions">
+      <button id="play" title="Play the tune (space bar outside the text box)">▶ Play</button>
+      <button id="open" title="Open an .abc, .musicxml or a PDF made here (its source is inside)">Open</button>
+      <input id="file" type="file" accept=".abc,.txt,.musicxml,.xml,.pdf,application/pdf" hidden>
+      <button id="share" title="Copy a link that opens this score">Share link</button>
       <button id="dl-src" title="Download the notation">Source</button>
+      <button id="dl-midi" title="Download a MIDI file">MIDI</button>
       <button id="dl-ps" title="Download the PostScript program">PS</button>
       <button id="dl-pdf" class="primary" title="Download a PDF">PDF</button>
     </span>
@@ -123,8 +131,10 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
           <tr><td><code>| || |] |: :| [1 :|2</code></td><td>bar lines, repeats and endings</td></tr>
           <tr><td><code>w: syl-la-ble_ word</code></td><td>lyrics under the line above; <code>-</code> splits syllables, <code>_</code> holds, <code>*</code> skips a note</td></tr>
           <tr><td><code>V:1</code> <code>V:2 clef=bass</code></td><td>voices, each on its own staff</td></tr>
+          <tr><td><code>%%transpose -2</code></td><td>print the tune transposed (semitones); the <em>Transpose</em> menu adds to it. For a B♭ clarinet or trumpet part write <code>+2</code>, E♭ alto sax <code>+9</code>, F horn <code>+7</code></td></tr>
           <tr><td><code>%%annotation page=1 type=text x=120 y=540 color=red text="breathe"</code></td><td>a reader's mark (also <code>type=circle</code> / <code>highlight</code> with <code>w= h=</code>); use <em>Annotate</em> to place them by clicking or dragging on the score. Marks are fixed on the page, so set paper, size and lines first</td></tr>
         </table>
+        <p>PDFs downloaded here carry their source as an attachment: <em>Open</em> one (or drop it on the page) to edit it again. <em>Share link</em> puts the whole score in the link itself; nothing is uploaded.</p>
         <p>Each ABC line is a line of music unless <em>Lines</em> is set to fill the width. MusicXML (uncompressed, partwise) can be pasted too. <a href="https://abcnotation.com/wiki/abc:standard:v2.1" target="_blank" rel="noopener">The ABC standard</a>.</p>
       </div>
     </details>
@@ -164,9 +174,14 @@ async function wasmSource() {
 }
 
 const $ = (id) => document.getElementById(id);
-const els = { tool: $('tool'), color: $('color'), src: $('src'), status: $('status'), pages: $('pages'), sample: $('sample'), tune: $('tune'), tuneWrap: $('tune-wrap'), paper: $('paper'), size: $('size'), breaks: $('breaks') };
+const els = { transpose: $('transpose'), play: $('play'), tool: $('tool'), color: $('color'), src: $('src'), status: $('status'), pages: $('pages'), sample: $('sample'), tune: $('tune'), tuneWrap: $('tune-wrap'), paper: $('paper'), size: $('size'), breaks: $('breaks') };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
+for (let k = 12; k >= -12; k--) {
+  const name = { 12: 'octave up', 7: 'a fifth up', 5: 'a fourth up', 2: 'a tone up', 0: 'as written', '-2': 'a tone down', '-5': 'a fourth down', '-7': 'a fifth down', '-12': 'octave down' }[k];
+  els.transpose.add(new Option((k > 0 ? '+' : k < 0 ? '−' : '') + Math.abs(k) + (name ? ` (${name})` : ''), String(k)));
+}
+els.transpose.value = '0';
 for (const s of bundle.samples) els.sample.add(new Option(s.title, s.file));
 els.sample.add(new Option('— your draft —', ''), 0);
 
@@ -175,7 +190,7 @@ const status = (html) => { els.status.innerHTML = html; };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function opts() {
-  return { lib: bundle.lib, paper: els.paper.value, sp: parseFloat(els.size.value), breaks: els.breaks.value, tune: parseInt(els.tune.value || '0', 10) };
+  return { lib: bundle.lib, transpose: parseInt(els.transpose.value, 10) || 0, paper: els.paper.value, sp: parseFloat(els.size.value), breaks: els.breaks.value, tune: parseInt(els.tune.value || '0', 10) };
 }
 
 function render() {
@@ -216,13 +231,14 @@ function render() {
   const ms = Math.round(performance.now() - t0);
   const warn = r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   const annList = r.annotations.length ? `<div class="annots">Annotations (stored as <code>%%annotation</code> lines in the source):<ul>${r.annotations.map((a) => `<li><span class="sw" style="background:${esc(engine.ANNOT_COLORS[a.color] || a.color)}"></span>p.${a.page} ${esc(a.type)}${a.text ? ': ' + esc(a.text) : ''} <button data-del="${a.line}" title="Remove this annotation">remove</button></li>`).join('')}</ul></div>` : '';
-  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, rendered by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}${annList}`);
+  const tr = r.transposed ? ` · transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis} (key signature of ${esc(r.transposed.key)} major)` : '';
+  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')}${tr} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, rendered by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}${annList}`);
 }
 
 let timer = 0;
 const later = () => { clearTimeout(timer); timer = setTimeout(render, 250); };
-els.src.addEventListener('input', () => { els.sample.value = ''; later(); });
-for (const el of [els.paper, els.size, els.breaks, els.tune]) el.addEventListener('input', render);
+els.src.addEventListener('input', () => { els.sample.value = ''; stop(); later(); });
+for (const el of [els.paper, els.size, els.breaks, els.tune, els.transpose]) el.addEventListener('input', () => { stop(); render(); });
 els.src.addEventListener('keydown', (e) => {
   if (e.key === 'Tab') { e.preventDefault(); const { selectionStart: a, selectionEnd: b } = els.src; els.src.setRangeText('  ', a, b, 'end'); later(); }
 });
@@ -312,18 +328,142 @@ $('dl-pdf').addEventListener('click', () => {
   if (!last) return;
   try {
     renderer.render(last.ps, { width: last.size[0], height: last.size[1], pdf: true });
-    download(slug() + '.pdf', renderer.pdf(), 'application/pdf');
+    const xml = engine.detectFormat(els.src.value) === 'musicxml';
+    // the PDF carries the source as an attachment (Open reads it back)
+    download(slug() + '.pdf', engine.finishPDF(renderer.pdf(), last, { source: els.src.value, filename: slug() + (xml ? '.musicxml' : '.abc') }), 'application/pdf');
   } catch (e) { status(`<div class="err">${esc(e.report || e.message)}</div>`); }
 });
 
-window.addEventListener('hashchange', () => {
-  const s = bundle.samples.find((x) => x.file === new URLSearchParams(location.hash.slice(1)).get('sample'));
-  if (s && els.src.value !== s.text) { els.src.value = s.text; els.sample.value = s.file; render(); }
+const toast = (msg) => {
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; t.setAttribute('role', 'status');
+  document.body.append(t); setTimeout(() => t.remove(), 2600);
+};
+
+// ---------------------------------------------------------------- playback
+// The engraver's performance (src/play.js: repeats, endings, ties, key and
+// accidentals) played on a small Web Audio synth: two oscillators per note.
+let audio = null, playing = null;
+function stop() {
+  if (!playing) return;
+  for (const o of playing.nodes) { try { o.stop(); } catch { /* already stopped */ } }
+  clearTimeout(playing.timer);
+  playing = null;
+  els.play.textContent = '▶ Play';
+}
+function play() {
+  if (playing) { stop(); return; }
+  let perf;
+  try { perf = engine.performanceOf(els.src.value, opts()); } catch (e) { status(`<div class="err">${esc(e.message)}</div>`); return; }
+  if (!perf.notes.length) { toast('Nothing to play'); return; }
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  audio.resume();
+  const whole = engine.wholeSeconds(perf);
+  const t0 = audio.currentTime + 0.12;
+  const out = audio.createGain();
+  out.gain.value = 0.9; out.connect(audio.destination);
+  const nodes = [];
+  for (const n of perf.notes) {
+    const at = t0 + n.at[0] / n.at[1] * whole;
+    const len = Math.max(0.05, n.dur[0] / n.dur[1] * whole);
+    const f = 440 * Math.pow(2, (n.midi - 69) / 12);
+    const g = audio.createGain();
+    const peak = 0.16, rel = Math.min(0.12, len * 0.3);
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(peak, at + 0.012);
+    g.gain.exponentialRampToValueAtTime(peak * 0.55, at + Math.min(0.25, len * 0.6));
+    g.gain.setValueAtTime(peak * 0.55, at + len - rel);
+    g.gain.linearRampToValueAtTime(0.0001, at + len);
+    g.connect(out);
+    for (const [type, mult, vol] of [['triangle', 1, 1], ['sine', 2, 0.25]]) {
+      const o = audio.createOscillator(); o.type = type; o.frequency.value = f * mult;
+      const v = audio.createGain(); v.gain.value = vol;
+      o.connect(v); v.connect(g); o.start(at); o.stop(at + len + 0.02); nodes.push(o);
+    }
+  }
+  const total = perf.length[0] / perf.length[1] * whole;
+  playing = { nodes, timer: setTimeout(stop, (total + 0.4) * 1000) };
+  els.play.textContent = '■ Stop';
+}
+els.play.addEventListener('click', play);
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.target.closest('textarea, input, select, button')) { e.preventDefault(); play(); }
 });
-// initial text: #sample=name, else the saved draft, else the first example
-const want = new URLSearchParams(location.hash.slice(1)).get('sample');
-const first = bundle.samples.find((s) => s.file === want) || (!store.get('sm-draft') && bundle.samples[0]);
-if (first) { els.src.value = first.text; els.sample.value = first.file; } else els.src.value = store.get('sm-draft') || '';
+$('dl-midi').addEventListener('click', () => {
+  try {
+    const perf = engine.performanceOf(els.src.value, opts());
+    download(slug() + '.mid', engine.midiFile(perf, { title: perf.title }), 'audio/midi');
+  } catch (e) { status(`<div class="err">${esc(e.message)}</div>`); }
+});
+
+// ---------------------------------------------------------------- open files
+// .abc / .musicxml as text; a PDF made here gives back its attached source.
+async function openFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let text;
+  if (engine.isPDF(bytes)) {
+    const got = engine.extractSource(bytes);
+    if (!got) { toast('That PDF has no score source inside (only PDFs made here do).'); return; }
+    text = got.text;
+  } else text = new TextDecoder().decode(bytes);
+  stop();
+  els.src.value = text; els.sample.value = ''; els.tune.innerHTML = '';
+  history.replaceState(null, '', location.pathname);
+  render();
+  toast('Opened ' + file.name);
+}
+$('open').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', () => { const f = $('file').files[0]; if (f) openFile(f); $('file').value = ''; });
+document.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); document.body.classList.add('dropping'); } });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+document.addEventListener('drop', (e) => {
+  document.body.classList.remove('dropping');
+  const f = e.dataTransfer.files[0];
+  if (f) { e.preventDefault(); openFile(f); }
+});
+
+// ---------------------------------------------------------------- share links
+// #s=<source, deflate-raw, base64url>&t=<transpose>: the score travels in the
+// link and never reaches a server (the part after # is not sent).
+const b64url = (bytes) => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+const pipe = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+async function shareLink() {
+  const z = await pipe(new TextEncoder().encode(els.src.value), new CompressionStream('deflate-raw'));
+  const p = new URLSearchParams();
+  p.set('s', b64url(z));
+  if (els.transpose.value !== '0') p.set('t', els.transpose.value);
+  if (els.paper.value !== 'letter') p.set('paper', els.paper.value);
+  if (els.tune.value && els.tune.value !== '0') p.set('tune', els.tune.value);
+  return location.origin + location.pathname + '#' + p.toString();
+}
+$('share').addEventListener('click', async () => {
+  const url = await shareLink();
+  history.replaceState(null, '', url);
+  try { await navigator.clipboard.writeText(url); toast(`Link copied (${url.length} characters)`); }
+  catch { toast('Link is in the address bar: copy it from there'); }
+});
+async function fromHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (p.has('t')) els.transpose.value = String(Math.max(-12, Math.min(12, parseInt(p.get('t'), 10) || 0)));
+  if (p.get('paper') === 'a4') els.paper.value = 'a4';
+  if (p.has('s')) {
+    try {
+      els.src.value = new TextDecoder().decode(await pipe(unb64url(p.get('s')), new DecompressionStream('deflate-raw')));
+      els.sample.value = '';
+      if (p.has('tune')) { const k = p.get('tune'); els.tune.innerHTML = ''; els.tune.add(new Option('', k)); els.tune.value = k; }
+      return true;
+    } catch { toast('That link is damaged: the score could not be read'); }
+  }
+  const s = bundle.samples.find((x) => x.file === p.get('sample'));
+  if (s) { els.src.value = s.text; els.sample.value = s.file; return true; }
+  return false;
+}
+window.addEventListener('hashchange', async () => { if (await fromHash()) { stop(); render(); } });
+// initial text: a #s= link or #sample=name, else the saved draft, else the first example
+if (!(await fromHash())) {
+  const first = !store.get('sm-draft') && bundle.samples[0];
+  if (first) { els.src.value = first.text; els.sample.value = first.file; } else els.src.value = store.get('sm-draft') || '';
+}
 
 try {
   engine = await import(moduleURL('src/index.js'));

@@ -14,7 +14,7 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSy
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { toPostScript, parse, VERSION } from '../src/index.js';
+import { toPostScript, parse, finishPDF, VERSION } from '../src/index.js';
 import { mdToHtml } from './md.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,6 +45,8 @@ for (const file of order) {
   const page = `${Math.round(r.size[0])}x${Math.round(r.size[1])}`;
   const psFile = path.join(dist, 'samples', base + '.ps');
   execFileSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', path.join(dist, 'samples', base + '.pdf'), psFile], { stdio: 'pipe' });
+  const pdfPath = path.join(dist, 'samples', base + '.pdf');
+  writeFileSync(pdfPath, finishPDF(readFileSync(pdfPath), r, { source: text, filename: file })); // source attached
   execFileSync(PSCAT, ['--page', page, '--dpi', '110', '--png', path.join(dist, 'samples', base + '.png'), psFile], { stdio: 'pipe' });
   const pngs = r.pages > 1 ? Array.from({ length: r.pages }, (_, k) => `${base}-${String(k + 1).padStart(3, '0')}.png`) : [base + '.png'];
   samples.push({
