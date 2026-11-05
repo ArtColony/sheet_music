@@ -79,7 +79,7 @@ fills them.
 | lyrics | `w:` line after the music line: `syl-la-ble` hyphenates, `word_` holds over the next note, `*` skips a note, `\|` jumps to the next bar; more `w:` lines are more verses |
 | piano / two staves | `%%score {RH LH}` + `V:RH clef=treble` / `V:LH clef=bass` in the header; then alternate `V:RH` and `V:LH` blocks, each block the same bars |
 | accented text | type it directly (é) or `\'e` |
-| reader's marks | `%%annotation page=1 type=text x=120 y=540 color=red text="breathe"` (also `type=circle`/`highlight` with `w= h=`; points from the page's lower left; render first to find positions) |
+| reader's marks | `%%annotation page=1 type=text x=120 y=540 color=red text="breathe"` (also `type=circle`/`highlight` with `w= h=`; points from the page's lower left. To place one, render to `.ps` and read the coordinates of nearby calls: `sm-bar-thin` lines give bar x positions and staff top/bottom y, `sm-head-*` give note x y. Marks stay put if paper, size or line breaks change) |
 
 Full table and limits: `docs/notation.md`.
 
