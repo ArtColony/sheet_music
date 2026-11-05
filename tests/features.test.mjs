@@ -80,3 +80,14 @@ test('PDFs carry their source and readable info', () => {
   assert.equal(extractSource(pdf), null);
   assert.equal(pdfString('a (b)'), '(a \\(b\\))');
 });
+
+test('PostScript viewer highlighting', async () => {
+  const { highlight } = await import('../site/ps-viewer.js');
+  const h = highlight('306 726 (Grieg \\(1875\\)) /Times-Bold 20 sm-text-c % title');
+  assert.match(h, /<span class="n">306<\/span>/);
+  assert.match(h, /<span class="s">\(Grieg \\\(1875\\\)\)<\/span>/);
+  assert.match(h, /<span class="l">\/Times-Bold<\/span>/);
+  assert.match(h, /<span class="sm" data-sm="sm-text-c">sm-text-c<\/span>/);
+  assert.match(h, /<span class="c">% title<\/span>/);
+  assert.equal(highlight('a < b'), 'a &lt; b');
+});

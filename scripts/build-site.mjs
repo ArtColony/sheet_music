@@ -81,6 +81,8 @@ copyFileSync(path.join(root, 'LICENSE'), path.join(dist, 'LICENSE.txt'));
 // ------------------------------------------------------------ editor (served + offline)
 const modules = {};
 for (const f of readdirSync(path.join(root, 'src')).filter((x) => x.endsWith('.js'))) modules['src/' + f] = readFileSync(path.join(root, 'src', f), 'utf8');
+modules['site/ps-viewer.js'] = readFileSync(path.join(root, 'site/ps-viewer.js'), 'utf8');
+copyFileSync(path.join(root, 'site/ps-viewer.js'), path.join(dist, 'ps-viewer.js'));
 for (const f of ['index.js', 'renderer.js', 'core.js']) modules['engine/' + f] = readFileSync(path.join(npm, f), 'utf8');
 const bundle = { version: VERSION, pscat: pscatVersion, lib: LIB, modules, samples: samples.map(({ file, title, text }) => ({ file, title, text })) };
 const editorTpl = readFileSync(path.join(root, 'site/editor.html'), 'utf8');
@@ -108,6 +110,7 @@ const shell = (title, desc, body) => `<!doctype html>
 <header class="top"><div class="wrap"><a class="brand" href="index.html">sheet_music</a><nav><a href="index.html#gallery">Gallery</a><a href="editor.html">Editor</a><a href="friction.html">pscat notes</a><a href="https://github.com/ArtColony/sheet_music">GitHub</a></nav></div></header>
 ${body}
 <footer class="foot"><div class="wrap">ArtColony / sheet_music ${VERSION} · code MIT · samples CC0 1.0 (public-domain music) · rendered with <a href="https://github.com/PSCatLabs/pscat/releases/tag/v${pscatVersion}">pscat ${pscatVersion}</a> (<a href="engine/THIRD_PARTY_NOTICES.md">notices</a>)</div></footer>
+<script type="module">import { wireLinks } from './ps-viewer.js'; wireLinks();</script>
 </body>
 </html>
 `;
@@ -119,7 +122,7 @@ const cards = samples.map((s) => `
       <h3>${esc(s.title)}</h3>
       <p class="by">${esc(s.composer)}</p>
       <p class="tags"><span class="fmt">${s.format}</span>${s.notes.map((n) => `<span>${esc(n)}</span>`).join('')}</p>
-      <p class="links"><a href="samples/${esc(s.base)}.pdf">PDF</a> · <a href="samples/${esc(s.base)}.ps">PostScript</a> · <a href="samples/${esc(s.file)}">${s.format} source</a> · <a href="editor.html#sample=${encodeURIComponent(s.file)}">Open in editor</a></p>
+      <p class="links"><a href="samples/${esc(s.base)}.pdf">PDF</a> · <a class="view-ps" data-name="${esc(s.base)}.ps" href="samples/${esc(s.base)}.ps">View PostScript</a> · <a href="samples/${esc(s.file)}">${s.format} source</a> · <a href="editor.html#sample=${encodeURIComponent(s.file)}">Open in editor</a></p>
     </div>
   </article>`).join('');
 

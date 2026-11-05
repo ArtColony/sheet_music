@@ -67,7 +67,11 @@ const { ps, pages, size, warnings } = toPostScript(abcText, { lib, paper: 'a4' }
 (`dist/editor.html`) that inlines the engraver, the glyph library, the samples
 and pscat's JavaScript glue, and loads `pscat.wasm` from beside it. It renders
 as you type, shows parse warnings and PostScript errors, and downloads the
-source, the PostScript, a MIDI file or a PDF. **Transpose** moves the score up
+source, a MIDI file or a PDF. **View PS** opens the PostScript the score
+became in a scrolling window: the score part is nothing but calls into the
+glyph library (`x y sm-head-black`, `x y1 y2 sm-stem` …), and clicking any
+`sm-` name jumps to its definition. The gallery's *View PostScript* links
+open the same window ([`site/ps-viewer.js`](site/ps-viewer.js)). **Transpose** moves the score up
 or down (respelled in the new key, chord symbols too). **Play** plays it in the
 browser, with repeats, endings and ties (space bar). **Share link** copies a
 link with the whole score compressed into the part after `#`, so nothing is

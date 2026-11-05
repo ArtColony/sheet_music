@@ -106,7 +106,7 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
       <button id="share" title="Copy a link that opens this score">Share link</button>
       <button id="dl-src" title="Download the notation">Source</button>
       <button id="dl-midi" title="Download a MIDI file">MIDI</button>
-      <button id="dl-ps" title="Download the PostScript program">PS</button>
+      <button id="dl-ps" title="View the PostScript program (and download it)">View PS</button>
       <button id="dl-pdf" class="primary" title="Download a PDF">PDF</button>
     </span>
   </div>
@@ -323,7 +323,14 @@ $('dl-src').addEventListener('click', () => {
   const xml = engine && engine.detectFormat(els.src.value) === 'musicxml';
   download(slug() + (xml ? '.musicxml' : '.abc'), els.src.value, xml ? 'application/xml' : 'text/vnd.abc');
 });
-$('dl-ps').addEventListener('click', () => { if (last) download(slug() + '.ps', last.ps, 'application/postscript'); });
+// View PS: the PostScript this score became, in a scrolling window; the
+// score part is all calls into lib/sm_engrave.ps (site/ps-viewer.js)
+let viewer = null;
+$('dl-ps').addEventListener('click', async () => {
+  if (!last) return;
+  viewer = viewer || await import(moduleURL('site/ps-viewer.js'));
+  viewer.openPostScript({ name: slug() + '.ps', text: last.ps, download: true });
+});
 $('dl-pdf').addEventListener('click', () => {
   if (!last) return;
   try {
