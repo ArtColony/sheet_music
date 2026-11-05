@@ -37,6 +37,8 @@ header h1 a { color: inherit; text-decoration: none; }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; flex: 1; }
 label.ctl { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
 select, button, input[type=range] { font: inherit; }
+input[type=range] { width: 84px; }
+.actions { display: inline-flex; gap: 8px; }
 select, button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; }
 button { cursor: pointer; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
@@ -52,7 +54,16 @@ main { flex: 1; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; mi
 .preview { overflow: auto; padding: 24px; min-height: 0; }
 .pages { display: flex; flex-direction: column; align-items: center; gap: 24px; }
 .page { background: var(--paper); box-shadow: var(--shadow); width: min(100%, 816px); line-height: 0; }
-.page img { width: 100%; height: auto; display: block; }
+.page { position: relative; }
+.page img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
+.annotating .page { cursor: crosshair; outline: 2px dashed var(--accent); outline-offset: 4px; }
+.page .drag { position: absolute; border: 2px dashed var(--accent); pointer-events: none; }
+.page .note-input { position: absolute; font: italic 13px system-ui, sans-serif; padding: 3px 6px; border: 2px solid var(--accent); border-radius: 4px; min-width: 180px; transform: translateY(-100%); background: #fff; color: #222; }
+.annots { margin-top: 6px; }
+.annots ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.annots li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+.annots .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.annots button { padding: 0 6px; font-size: 12px; line-height: 18px; }
 .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
 details.help { border-top: 1px solid var(--line); }
 details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -79,10 +90,17 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
     <label class="ctl">Paper <select id="paper"><option value="letter">Letter</option><option value="a4">A4</option></select></label>
     <label class="ctl">Size <input id="size" type="range" min="4" max="8" step="0.25" value="5.5" aria-label="Staff size"></label>
     <label class="ctl">Lines <select id="breaks"><option value="source">as written</option><option value="auto">fill width</option></select></label>
+    <span class="annot-tools" role="group" aria-label="Annotate">
+      <label class="ctl">Annotate <select id="tool" title="Click the score to add a note; drag for a circle or highlight">
+        <option value="">off</option><option value="text">text note</option><option value="circle">circle</option><option value="highlight">highlight</option></select></label>
+      <select id="color" aria-label="Annotation colour"><option value="red">red</option><option value="blue">blue</option><option value="green">green</option><option value="orange">orange</option><option value="purple">purple</option><option value="yellow">yellow</option><option value="black">black</option></select>
+    </span>
     <span class="spacer"></span>
-    <button id="dl-src" title="Download the notation">Source</button>
-    <button id="dl-ps" title="Download the PostScript program">PostScript</button>
-    <button id="dl-pdf" class="primary" title="Download a PDF">PDF</button>
+    <span class="actions">
+      <button id="dl-src" title="Download the notation">Source</button>
+      <button id="dl-ps" title="Download the PostScript program">PS</button>
+      <button id="dl-pdf" class="primary" title="Download a PDF">PDF</button>
+    </span>
   </div>
 </header>
 <main>
@@ -105,6 +123,7 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
           <tr><td><code>| || |] |: :| [1 :|2</code></td><td>bar lines, repeats and endings</td></tr>
           <tr><td><code>w: syl-la-ble_ word</code></td><td>lyrics under the line above; <code>-</code> splits syllables, <code>_</code> holds, <code>*</code> skips a note</td></tr>
           <tr><td><code>V:1</code> <code>V:2 clef=bass</code></td><td>voices, each on its own staff</td></tr>
+          <tr><td><code>%%annotation page=1 type=text x=120 y=540 color=red text="breathe"</code></td><td>a reader's mark (also <code>type=circle</code> / <code>highlight</code> with <code>w= h=</code>); use <em>Annotate</em> to place them by clicking or dragging on the score</td></tr>
         </table>
         <p>Each ABC line is a line of music unless <em>Lines</em> is set to fill the width. MusicXML (uncompressed, partwise) can be pasted too. <a href="https://abcnotation.com/wiki/abc:standard:v2.1" target="_blank" rel="noopener">The ABC standard</a>.</p>
       </div>
@@ -145,7 +164,7 @@ async function wasmSource() {
 }
 
 const $ = (id) => document.getElementById(id);
-const els = { src: $('src'), status: $('status'), pages: $('pages'), sample: $('sample'), tune: $('tune'), tuneWrap: $('tune-wrap'), paper: $('paper'), size: $('size'), breaks: $('breaks') };
+const els = { tool: $('tool'), color: $('color'), src: $('src'), status: $('status'), pages: $('pages'), sample: $('sample'), tune: $('tune'), tuneWrap: $('tune-wrap'), paper: $('paper'), size: $('size'), breaks: $('breaks') };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
 for (const s of bundle.samples) els.sample.add(new Option(s.title, s.file));
@@ -196,7 +215,8 @@ function render() {
   els.pages.innerHTML = urls.map((u, i) => `<div class="page"><img src="${u}" alt="Page ${i + 1} of ${esc(r.title)}"></div>`).join('');
   const ms = Math.round(performance.now() - t0);
   const warn = r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
-  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, rendered by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}`);
+  const annList = r.annotations.length ? `<div class="annots">Annotations (stored as <code>%%annotation</code> lines in the source):<ul>${r.annotations.map((a) => `<li><span class="sw" style="background:${esc(engine.ANNOT_COLORS[a.color] || a.color)}"></span>p.${a.page} ${esc(a.type)}${a.text ? ': ' + esc(a.text) : ''} <button data-del="${a.line}" title="Remove this annotation">remove</button></li>`).join('')}</ul></div>` : '';
+  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, rendered by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}${annList}`);
 }
 
 let timer = 0;
@@ -209,6 +229,70 @@ els.src.addEventListener('keydown', (e) => {
 els.sample.addEventListener('change', () => {
   const s = bundle.samples.find((x) => x.file === els.sample.value);
   if (s) { els.src.value = s.text; els.tune.innerHTML = ''; render(); history.replaceState(null, '', '#sample=' + encodeURIComponent(s.file)); }
+});
+
+// ---------------------------------------------------------------- annotations
+// Click the page (text) or drag a box (circle, highlight). The mark becomes a
+// %%annotation line in the source, so it is part of the PostScript and PDF.
+function pagePoint(img, ev) {
+  const b = img.getBoundingClientRect();
+  const [W, H] = last.size;
+  return { x: (ev.clientX - b.left) / b.width * W, y: H - (ev.clientY - b.top) / b.height * H, px: ev.clientX - b.left, py: ev.clientY - b.top };
+}
+function commitAnnotation(a) {
+  els.src.value = engine.addAnnotation(els.src.value, { ...a, color: els.color.value }, { tune: opts().tune });
+  els.sample.value = '';
+  render();
+}
+let drag = null;
+els.pages.addEventListener('pointerdown', (ev) => {
+  const img = ev.target.closest('.page img');
+  if (!img || !els.tool.value || !last) return;
+  ev.preventDefault();
+  const pageEl = img.parentElement;
+  const page = [...els.pages.querySelectorAll('.page')].indexOf(pageEl) + 1;
+  const p0 = pagePoint(img, ev);
+  if (els.tool.value === 'text') {
+    pageEl.querySelectorAll('.note-input').forEach((n) => n.remove());
+    const input = document.createElement('input');
+    input.className = 'note-input';
+    input.placeholder = 'Note, then Enter';
+    input.style.left = p0.px + 'px'; input.style.top = p0.py + 'px';
+    pageEl.append(input);
+    setTimeout(() => input.focus(), 0);
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; const t = input.value.trim(); input.remove(); if (ok && t) commitAnnotation({ page, type: 'text', x: p0.x, y: p0.y, text: t }); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
+    return;
+  }
+  const box = document.createElement('div');
+  box.className = 'drag';
+  pageEl.append(box);
+  drag = { img, page, p0, box };
+  img.setPointerCapture(ev.pointerId);
+});
+els.pages.addEventListener('pointermove', (ev) => {
+  if (!drag) return;
+  const p = pagePoint(drag.img, ev);
+  Object.assign(drag.box.style, { left: Math.min(p.px, drag.p0.px) + 'px', top: Math.min(p.py, drag.p0.py) + 'px', width: Math.abs(p.px - drag.p0.px) + 'px', height: Math.abs(p.py - drag.p0.py) + 'px' });
+});
+els.pages.addEventListener('pointerup', (ev) => {
+  if (!drag) return;
+  const { img, page, p0, box } = drag;
+  drag = null;
+  box.remove();
+  const p = pagePoint(img, ev);
+  const w = Math.abs(p.x - p0.x), h = Math.abs(p.y - p0.y);
+  if (w < 4 || h < 4) return;
+  commitAnnotation({ page, type: els.tool.value, x: Math.min(p.x, p0.x), y: Math.min(p.y, p0.y), w, h });
+});
+els.tool.addEventListener('input', () => { document.body.classList.toggle('annotating', !!els.tool.value); });
+els.status.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-del]');
+  if (!b) return;
+  els.src.value = engine.removeAnnotation(els.src.value, parseInt(b.dataset.del, 10), opts().tune);
+  render();
 });
 
 const slug = () => ((last && last.title) || 'score').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'score';
@@ -232,6 +316,10 @@ $('dl-pdf').addEventListener('click', () => {
   } catch (e) { status(`<div class="err">${esc(e.report || e.message)}</div>`); }
 });
 
+window.addEventListener('hashchange', () => {
+  const s = bundle.samples.find((x) => x.file === new URLSearchParams(location.hash.slice(1)).get('sample'));
+  if (s && els.src.value !== s.text) { els.src.value = s.text; els.sample.value = s.file; render(); }
+});
 // initial text: #sample=name, else the saved draft, else the first example
 const want = new URLSearchParams(location.hash.slice(1)).get('sample');
 const first = bundle.samples.find((s) => s.file === want) || (!store.get('sm-draft') && bundle.samples[0]);

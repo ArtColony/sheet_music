@@ -51,7 +51,7 @@ for (const file of order) {
     file, base, text, title: r.title, pages: r.pages, pngs,
     format: r.format === 'musicxml' ? 'MusicXML' : 'ABC',
     composer: score.meta.composer || score.meta.origin || '',
-    notes: features(score),
+    notes: [...features(score), ...(r.annotations.length ? ['annotations'] : [])],
     psSha: sha(r.ps), pdfSha: sha(readFileSync(path.join(dist, 'samples', base + '.pdf'))),
   });
 }
@@ -67,6 +67,7 @@ function features(score) {
   if (evs.some((e) => e.grace)) f.add('grace notes');
   if (evs.some((e) => e.dyn)) f.add('dynamics');
   if (evs.some((e) => e.notes && e.notes.some((n) => n.acc))) f.add('accidentals');
+  if (score.staves.some((s) => s.clef.sign === 'F') && score.staves.length === 1) f.add('bass clef');
   return [...f];
 }
 

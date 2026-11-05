@@ -1,0 +1,18 @@
+X:1
+T:In the Hall of the Mountain King
+T:the opening theme, for bassoon
+C:Edvard Grieg (1875), Peer Gynt
+S:Public domain melody; this setting for solo bassoon written for this project
+Z:Arranged for ArtColony/sheet_music (for Alex), CC0 1.0
+M:4/4
+L:1/8
+Q:"Alla marcia e molto marcato" 1/4=96
+K:Bm clef=bass
+!pp!.B,,.C,.D,.E, .F,.D,F,2 | .^E,.C,^E,2 .=E,.=C,E,2 | .B,,.C,.D,.E, .F,.D,.F,.B, | .A,.F,.D,.F, A,4 |
+[K:clef=tenor] !mp!.B,.C.D.E .F.DF2 | .^E.C^E2 .=E.=CE2 | .B,.C.D.E .F.D.F.B | .A.F.D.F A4 |
+[K:clef=bass] !crescendo(!!>!B,,!>!C,!>!D,!>!E, !>!F,!>!D,F,2 | !>!^E,!>!C,^E,2 !>!=E,!>!=C,E,2 | !>!B,,!>!C,!>!D,!>!E, !>!F,!>!D,!>!F,!>!B, | !crescendo)!!>!A,!>!F,!>!D,!>!F, !ff!!fermata!B,,4 |]
+%%annotation page=1 type=highlight x=225 y=612 w=114 h=38 color=yellow
+%%annotation page=1 type=text x=228 y=657 color=red text="E-sharp, then C-natural: watch the fingering"
+%%annotation page=1 type=circle x=526 y=626 w=32 h=30 color=blue
+%%annotation page=1 type=text x=520 y=609 color=blue text="breathe"
+%%annotation page=1 type=text x=96 y=571 color=green text="tenor clef: 8va of the line above"

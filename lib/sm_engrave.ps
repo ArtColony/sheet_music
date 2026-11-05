@@ -554,3 +554,23 @@
 /sm-grace-slash {
   sm-at 0.12 setlinewidth 1 setlinecap -0.75 -0.6 moveto 0.75 0.6 lineto stroke grestore
 } bind def
+
+% ---------------------------------------------------------------- annotations
+% Reader's marks added in the editor (%%annotation lines in the source).
+% Positions in points; colours as r g b.
+% x y t r g b sm-annot-text   -- an italic note, baseline at y
+/sm-annot-text {
+  gsave setrgbcolor /Helvetica-Oblique 10 sm-setf 3 1 roll moveto sm-show grestore
+} bind def
+% x y w h r g b sm-annot-circle   -- an ellipse drawn inside the box
+/sm-annot-circle {
+  gsave setrgbcolor
+  /sm-ah exch def /sm-aw exch def /sm-ay exch def /sm-ax exch def
+  sm-mtx currentmatrix pop
+  sm-ax sm-aw 2 div add sm-ay sm-ah 2 div add translate
+  sm-aw 2 div sm-ah 2 div 0.01 max scale
+  newpath 1 0 moveto 0 0 1 0 360 arc closepath
+  sm-mtx setmatrix 1.3 setlinewidth stroke grestore
+} bind def
+% x y w h r g b sm-annot-highlight   -- a pale box, drawn under the music
+/sm-annot-highlight { gsave setrgbcolor rectfill grestore } bind def

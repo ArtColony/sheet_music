@@ -37,6 +37,7 @@ page lists what is drawn. Anything else is skipped, usually with a warning
 | Voices | `V:1 clef=bass name="LH"` and `%%score {1 2}` | each voice on its own staff; braces from `%%score {}` or a treble+bass pair |
 | Line breaks | each music line | a system per line (lines too long are split evenly); `\` at the end joins lines; `--breaks auto` fills lines instead |
 | Text | `\'e` `\"o` `\ss` … | Latin accented letters, composed from accent glyphs |
+| Annotations | `%%annotation page=1 type=text x=120 y=540 color=red text="breathe"` | a reader's marks at page positions (points from the lower left): `type=text`, `circle` or `highlight` (with `w=` `h=`); colours `red blue green orange purple yellow black` or `#rrggbb`. The editor's *Annotate* tool writes these lines; in MusicXML they live in `<!-- %%annotation ... -->` comments. Highlights are drawn under the music |
 
 **Not yet:** two voices on one staff (`&`, `%%score (1 2)`), macros (`m:`, `U:`),
 `%%` formatting directives other than `%%score`, transposition, lyrics that

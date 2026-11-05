@@ -504,7 +504,9 @@ export function engrave(score, options = {}) {
     const n = Math.abs(fifths);
     const list = fifths > 0 ? KEY_SHARPS : KEY_FLATS;
     for (let k = 0; k < n; k++) {
-      P(`${nums(x + 0.5 * sp, c + (list[k] + off) * sp / 2)} ${fifths > 0 ? 'sm-acc-sharp' : 'sm-acc-flat'}`);
+      let p = list[k] + off;
+      if (fifths > 0 && clef.sign === 'C' && clef.line === 4 && p > 4) p -= 7; // tenor clef sharps: F# on the 2nd line
+      P(`${nums(x + 0.5 * sp, c + p * sp / 2)} ${fifths > 0 ? 'sm-acc-sharp' : 'sm-acc-flat'}`);
       x += 1.0 * sp;
     }
     return x + (n ? 0.8 * sp : 0);

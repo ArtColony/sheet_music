@@ -56,7 +56,10 @@ const { ps, pages, size, warnings } = toPostScript(abcText, { lib, paper: 'a4' }
 (`dist/editor.html`) that inlines the engraver, the glyph library, the samples
 and pscat's JavaScript glue, and loads `pscat.wasm` from beside it. It renders
 as you type, shows parse warnings and PostScript errors, and downloads the
-source, the PostScript or a PDF. `dist/sheet-music-editor-offline.html` also
+source, the PostScript or a PDF. **Annotate** adds a reader's marks (text
+notes, circles, highlights) by clicking or dragging on the score; they are
+saved as `%%annotation` lines in the source, so they appear in the PDF and in
+`bin/sheet.mjs` output too. `dist/sheet-music-editor-offline.html` also
 carries the WebAssembly (gzipped, ~7 MB) and works straight from disk with no
 network.
 
@@ -83,6 +86,8 @@ project and dedicated to the public domain (CC0 1.0); provenance in
 | `drunken-sailor.abc` | Dorian mode, repeats, part labels |
 | `ode-to-joy.abc` | piano: two staves with brace, 1st/2nd endings |
 | `frere-jacques.musicxml` | MusicXML: lyrics with accents, harmony, round entries |
+| `camptown-races.abc` | Stephen Foster (1850), from his 1850 edition: verse and chorus, dotted rhythms |
+| `mountain-king.abc` | Grieg's theme set for **bassoon** (for Alex): bass and tenor clef, articulations, example annotations |
 | `twinkle.abc` | lyrics and chord symbols |
 | `feature-tour.abc` | test piece: tuplets, grace notes, 16ths, dynamics, hairpins, key/meter/clef changes, multi-measure rest |
 
