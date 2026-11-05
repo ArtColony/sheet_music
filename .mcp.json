@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pscat": {
+      "type": "stdio",
+      "command": "vendor/pscat/pscat-mcp"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+# Tests on every push and PR: parser units, golden PostScript/PDF hashes, and
+# byte-identical PDFs from the pscat CLI and its WebAssembly build, using the
+# release pinned in pscat.lock.json (fetched and SHA-256 checked).
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/cache@v4
+        with:
+          path: .cache/pscat
+          key: pscat-${{ hashFiles('pscat.lock.json') }}
+      - run: node scripts/fetch-pscat.mjs
+      - run: vendor/pscat/pscat --version
+      - run: node --test tests/*.test.mjs
+      - run: node scripts/build-site.mjs

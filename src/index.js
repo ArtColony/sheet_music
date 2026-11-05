@@ -1,6 +1,6 @@
 // Public API, shared by the Node command line and the browser editor.
 //
-//   import { toPostScript } from './src/index.js';
+//   toPostScript (from src/index.js):
 //   const { ps, warnings, pages } = toPostScript(abcText, { lib, paper: 'a4' });
 //
 // `lib` is the text of lib/sm_engrave.ps (the caller loads it: from disk in

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sheet Music Editor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cellipse cx=%225%22 cy=%2212%22 rx=%224%22 ry=%223%22 transform=%22rotate(-20 5 12)%22/%3E%3Crect x=%228%22 y=%221%22 width=%221.4%22 height=%2211%22/%3E%3C/svg%3E">
+<meta name="description" content="Type ABC or MusicXML, see engraved sheet music, download a PDF. Rendered in your browser by pscat's WebAssembly PostScript interpreter.">
+<style>
+:root {
+  --bg: #f4f1ea; --panel: #fffdf8; --ink: #1f1d1a; --muted: #6b665d; --line: #ddd6c8;
+  --accent: #7a3e1d; --accent-ink: #fff; --paper: #ffffff; --shadow: 0 1px 2px rgba(0,0,0,.08), 0 6px 24px rgba(0,0,0,.08);
+  --warn-bg: #fff4d6; --warn-ink: #6b4e00; --err-bg: #fde4e1; --err-ink: #8a1c10; --code: #fbf8f1;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #181715; --panel: #211f1c; --ink: #ece7dd; --muted: #a39d92; --line: #3a3631;
+    --accent: #e0a16f; --accent-ink: #1a1410; --paper: #ffffff; --shadow: 0 1px 2px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.4);
+    --warn-bg: #3a3014; --warn-ink: #f3d68a; --err-bg: #42201c; --err-ink: #f5b3a9; --code: #1c1b18;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #181715; --panel: #211f1c; --ink: #ece7dd; --muted: #a39d92; --line: #3a3631;
+  --accent: #e0a16f; --accent-ink: #1a1410; --paper: #ffffff; --shadow: 0 1px 2px rgba(0,0,0,.5), 0 6px 24px rgba(0,0,0,.4);
+  --warn-bg: #3a3014; --warn-ink: #f3d68a; --err-bg: #42201c; --err-ink: #f5b3a9; --code: #1c1b18;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font: 600 17px/1.2 Georgia, "Times New Roman", serif; margin: 0 8px 0 0; white-space: nowrap; }
+header h1 a { color: inherit; text-decoration: none; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; flex: 1; }
+label.ctl { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+select, button, input[type=range] { font: inherit; }
+select, button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+.spacer { flex: 1; }
+main { flex: 1; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; min-height: 0; }
+.editor { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-height: 0; background: var(--panel); }
+.editor textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; padding: 14px 16px; background: var(--code); color: var(--ink);
+  font: 13.5px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace; tab-size: 2; white-space: pre; overflow: auto; }
+.status { padding: 8px 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); min-height: 36px; max-height: 30vh; overflow: auto; }
+.status .warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: 4px; padding: 3px 7px; margin: 3px 0; }
+.status .err { background: var(--err-bg); color: var(--err-ink); border-radius: 4px; padding: 3px 7px; margin: 3px 0; white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; }
+.preview { overflow: auto; padding: 24px; min-height: 0; }
+.pages { display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.page { background: var(--paper); box-shadow: var(--shadow); width: min(100%, 816px); line-height: 0; }
+.page img { width: 100%; height: auto; display: block; }
+.empty { color: var(--muted); text-align: center; padding: 60px 20px; }
+details.help { border-top: 1px solid var(--line); }
+details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); font-size: 13px; }
+.help-body { padding: 0 16px 12px; font-size: 12.5px; max-height: 36vh; overflow: auto; }
+.help-body table { border-collapse: collapse; width: 100%; }
+.help-body td { border-top: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
+.help-body code { font-family: ui-monospace, Menlo, monospace; background: var(--code); padding: 0 3px; border-radius: 3px; }
+.credit { font-size: 12px; color: var(--muted); }
+.credit a { color: var(--accent); }
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 45vh auto; }
+  .editor { border-right: 0; border-bottom: 1px solid var(--line); }
+  .preview { padding: 16px; }
+  header h1 { font-size: 16px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="index.html" id="home">Sheet Music Editor</a></h1>
+  <div class="controls">
+    <label class="ctl">Example <select id="sample" aria-label="Load an example"></select></label>
+    <label class="ctl" id="tune-wrap" hidden>Tune <select id="tune"></select></label>
+    <label class="ctl">Paper <select id="paper"><option value="letter">Letter</option><option value="a4">A4</option></select></label>
+    <label class="ctl">Size <input id="size" type="range" min="4" max="8" step="0.25" value="5.5" aria-label="Staff size"></label>
+    <label class="ctl">Lines <select id="breaks"><option value="source">as written</option><option value="auto">fill width</option></select></label>
+    <span class="spacer"></span>
+    <button id="dl-src" title="Download the notation">Source</button>
+    <button id="dl-ps" title="Download the PostScript program">PostScript</button>
+    <button id="dl-pdf" class="primary" title="Download a PDF">PDF</button>
+  </div>
+</header>
+<main>
+  <section class="editor">
+    <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="ABC or MusicXML source"></textarea>
+    <div class="status" id="status" role="status" aria-live="polite">Loading the pscat engine…</div>
+    <details class="help">
+      <summary>ABC quick reference</summary>
+      <div class="help-body">
+        <table>
+          <tr><td><code>X:1</code> <code>T:Title</code> <code>C:Composer</code></td><td>tune number, title (a second <code>T:</code> is a subtitle), composer</td></tr>
+          <tr><td><code>M:6/8</code> <code>L:1/8</code> <code>Q:1/4=96</code> <code>K:Dm</code></td><td>meter, unit note length, tempo, key (ends the header; modes like <code>Ador</code>, clefs like <code>K:C clef=bass</code>)</td></tr>
+          <tr><td><code>C D E F G A B c d e</code></td><td>notes from middle C up; <code>C,</code> an octave lower, <code>c'</code> an octave higher</td></tr>
+          <tr><td><code>^F _B =E</code></td><td>sharp, flat, natural (<code>^^</code> <code>__</code> double)</td></tr>
+          <tr><td><code>A2 A/ A3/2 A&gt;B</code></td><td>lengths in units of <code>L:</code>; <code>&gt;</code> dots the first, halves the second</td></tr>
+          <tr><td><code>z2 Z4</code></td><td>rest, multi-measure rest</td></tr>
+          <tr><td><code>[CEG]2 A2-A2 (3ABc (AB)</code></td><td>chord, tie, triplet, slur</td></tr>
+          <tr><td><code>"Am7"A</code> <code>"^Fine"</code></td><td>chord symbol, annotation above (<code>_</code> below)</td></tr>
+          <tr><td><code>!p! !fermata! .A ~A {g}A</code></td><td>dynamics, decorations, staccato, roll, grace note</td></tr>
+          <tr><td><code>| || |] |: :| [1 :|2</code></td><td>bar lines, repeats and endings</td></tr>
+          <tr><td><code>w: syl-la-ble_ word</code></td><td>lyrics under the line above; <code>-</code> splits syllables, <code>_</code> holds, <code>*</code> skips a note</td></tr>
+          <tr><td><code>V:1</code> <code>V:2 clef=bass</code></td><td>voices, each on its own staff</td></tr>
+        </table>
+        <p>Each ABC line is a line of music unless <em>Lines</em> is set to fill the width. MusicXML (uncompressed, partwise) can be pasted too. <a href="https://abcnotation.com/wiki/abc:standard:v2.1" target="_blank" rel="noopener">The ABC standard</a>.</p>
+      </div>
+    </details>
+  </section>
+  <section class="preview" id="preview" aria-label="Rendered sheet music">
+    <div class="pages" id="pages"><div class="empty">Starting…</div></div>
+  </section>
+</main>
+<script id="sm-bundle" type="application/json">__SM_BUNDLE__</script>
+<script id="sm-wasm" type="application/octet-stream">__SM_WASM__</script>
+<script type="module">
+// The page carries its own code: the engraver (src/*.js), the PostScript glyph
+// library and the pscat WebAssembly glue are inlined by scripts/build-site.mjs
+// as module sources, loaded here through Blob URLs. The interpreter itself is
+// pscat.wasm, next to this page or (offline edition) inlined, gzipped.
+const bundle = JSON.parse(document.getElementById('sm-bundle').textContent);
+const cache = new Map();
+function moduleURL(file) {
+  if (cache.has(file)) return cache.get(file);
+  let code = bundle.modules[file];
+  if (code === undefined) throw Error('missing bundled module ' + file);
+  // only specifiers that name a bundled module are rewritten (comments may quote others)
+  const resolve = (ref) => { const f = new URL(ref, 'https://bundle.local/' + file).pathname.slice(1); return bundle.modules[f] === undefined ? ref : moduleURL(f); };
+  code = code.replace(/\bfrom\s*(['"])(\.[^'"]+)\1/g, (_, q, ref) => 'from ' + q + resolve(ref) + q)
+    .replace(/\bimport\s*(['"])(\.[^'"]+)\1/g, (_, q, ref) => 'import ' + q + resolve(ref) + q);
+  const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+  cache.set(file, url);
+  return url;
+}
+async function wasmSource() {
+  const packed = document.getElementById('sm-wasm').textContent.trim();
+  if (packed && !packed.startsWith('__')) {
+    const bytes = Uint8Array.from(atob(packed), (c) => c.charCodeAt(0));
+    return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  }
+  return new URL('pscat.wasm', location.href);
+}
+
+const $ = (id) => document.getElementById(id);
+const els = { src: $('src'), status: $('status'), pages: $('pages'), sample: $('sample'), tune: $('tune'), tuneWrap: $('tune-wrap'), paper: $('paper'), size: $('size'), breaks: $('breaks') };
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+
+for (const s of bundle.samples) els.sample.add(new Option(s.title, s.file));
+els.sample.add(new Option('— your draft —', ''), 0);
+
+let engine, renderer, last = null, urls = [];
+const status = (html) => { els.status.innerHTML = html; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function opts() {
+  return { lib: bundle.lib, paper: els.paper.value, sp: parseFloat(els.size.value), breaks: els.breaks.value, tune: parseInt(els.tune.value || '0', 10) };
+}
+
+function render() {
+  const text = els.src.value;
+  store.set('sm-draft', text);
+  if (!engine || !renderer) return;
+  if (!text.trim()) { els.pages.innerHTML = '<div class="empty">Type or paste ABC or MusicXML on the left.</div>'; status(''); return; }
+  const t0 = performance.now();
+  let r;
+  try {
+    r = engine.toPostScript(text, opts());
+  } catch (e) {
+    status(`<div class="err">${esc(e.message)}</div>`);
+    return;
+  }
+  // tune picker for files with several X: tunes
+  if (r.tunes.length > 1) {
+    els.tuneWrap.hidden = false;
+    const cur = els.tune.value;
+    if (els.tune.options.length !== r.tunes.length || [...els.tune.options].some((o, i) => o.text !== `${i + 1}. ${r.tunes[i]}`)) {
+      els.tune.innerHTML = '';
+      r.tunes.forEach((t, i) => els.tune.add(new Option(`${i + 1}. ${t}`, String(i))));
+      els.tune.value = cur && +cur < r.tunes.length ? cur : '0';
+    }
+  } else { els.tuneWrap.hidden = true; els.tune.innerHTML = ''; }
+  let svgs;
+  try {
+    renderer.render(r.ps, { width: r.size[0], height: r.size[1], svg: true });
+    svgs = renderer.svgPages();
+  } catch (e) {
+    status(`<div class="err">${esc(e.report || e.message)}</div>`);
+    return;
+  }
+  last = r;
+  urls.forEach((u) => URL.revokeObjectURL(u));
+  urls = svgs.map((s) => URL.createObjectURL(new Blob([s], { type: 'image/svg+xml' })));
+  els.pages.innerHTML = urls.map((u, i) => `<div class="page"><img src="${u}" alt="Page ${i + 1} of ${esc(r.title)}"></div>`).join('');
+  const ms = Math.round(performance.now() - t0);
+  const warn = r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
+  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, rendered by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}`);
+}
+
+let timer = 0;
+const later = () => { clearTimeout(timer); timer = setTimeout(render, 250); };
+els.src.addEventListener('input', () => { els.sample.value = ''; later(); });
+for (const el of [els.paper, els.size, els.breaks, els.tune]) el.addEventListener('input', render);
+els.src.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') { e.preventDefault(); const { selectionStart: a, selectionEnd: b } = els.src; els.src.setRangeText('  ', a, b, 'end'); later(); }
+});
+els.sample.addEventListener('change', () => {
+  const s = bundle.samples.find((x) => x.file === els.sample.value);
+  if (s) { els.src.value = s.text; els.tune.innerHTML = ''; render(); history.replaceState(null, '', '#sample=' + encodeURIComponent(s.file)); }
+});
+
+const slug = () => ((last && last.title) || 'score').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'score';
+function download(name, data, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data], { type }));
+  a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('dl-src').addEventListener('click', () => {
+  const xml = engine && engine.detectFormat(els.src.value) === 'musicxml';
+  download(slug() + (xml ? '.musicxml' : '.abc'), els.src.value, xml ? 'application/xml' : 'text/vnd.abc');
+});
+$('dl-ps').addEventListener('click', () => { if (last) download(slug() + '.ps', last.ps, 'application/postscript'); });
+$('dl-pdf').addEventListener('click', () => {
+  if (!last) return;
+  try {
+    renderer.render(last.ps, { width: last.size[0], height: last.size[1], pdf: true });
+    download(slug() + '.pdf', renderer.pdf(), 'application/pdf');
+  } catch (e) { status(`<div class="err">${esc(e.report || e.message)}</div>`); }
+});
+
+// initial text: #sample=name, else the saved draft, else the first example
+const want = new URLSearchParams(location.hash.slice(1)).get('sample');
+const first = bundle.samples.find((s) => s.file === want) || (!store.get('sm-draft') && bundle.samples[0]);
+if (first) { els.src.value = first.text; els.sample.value = first.file; } else els.src.value = store.get('sm-draft') || '';
+
+try {
+  engine = await import(moduleURL('src/index.js'));
+  const pscat = await import(moduleURL('engine/index.js'));
+  renderer = await pscat.createRenderer({ wasm: await wasmSource() });
+  window.sheetMusic = { engine, renderer, bundle }; // for tests and the curious
+  render();
+} catch (e) {
+  status(`<div class="err">Could not start the pscat engine: ${esc(e.message)}. If you opened this file from disk, use the offline edition (sheet-music-editor-offline.html), which carries the engine inside it.</div>`);
+}
+</script>
+</body>
+</html>

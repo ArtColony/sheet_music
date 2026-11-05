@@ -1,0 +1,112 @@
+# sheet_music
+
+Deterministic sheet-music engraving with [pscat](https://github.com/PSCatLabs/pscat).
+Write a tune in **ABC notation** (or bring **MusicXML**), get an engraved score as
+**PDF**, from the command line or in a one-page browser editor. Part of
+[ArtColony](https://github.com/ArtColony).
+
+**Site:** <https://artcolony.github.io/sheet_music/>: [gallery](https://artcolony.github.io/sheet_music/#gallery),
+[editor](https://artcolony.github.io/sheet_music/editor.html),
+[pscat notes](https://artcolony.github.io/sheet_music/friction.html).
+
+```
+ABC / MusicXML ──parse──▶ score model ──layout──▶ PostScript ──pscat──▶ PDF · PNG · SVG
+ src/abc.js                src/score.js   src/layout.js   lib/sm_engrave.ps   CLI or WebAssembly
+ src/musicxml.js
+```
+
+- **Deterministic.** Durations are exact rationals; every coordinate is written
+  with fixed precision. The same input gives the same PostScript bytes in Node
+  and in every browser, and pscat turns it into the same PDF bytes, whether
+  through the command-line tool or its WebAssembly build. `npm test` checks all three.
+- **No music font.** Clefs, noteheads, rests, accidentals, flags, ties and the brace
+  are PostScript paths in [`lib/sm_engrave.ps`](lib/sm_engrave.ps). Text uses
+  only the PostScript standard 35 fonts that every pscat build has.
+- **No dependencies.** Plain ES modules, Node 22+, and the pinned pscat release.
+
+## Quick start
+
+```sh
+npm run pscat:fetch                      # pscat 0.7.0-rc.4 into vendor/, SHA-256 checked
+node bin/sheet.mjs samples/amazing-grace.abc            # -> samples/amazing-grace.pdf
+node bin/sheet.mjs my-tune.abc -o out/my-tune.pdf --paper a4
+node bin/sheet.mjs my-tune.abc -o my-tune.png --dpi 150 # page PNGs
+node bin/sheet.mjs my-tune.abc -o my-tune.ps            # just the PostScript
+node bin/sheet.mjs song.musicxml --engine wasm -o song.pdf  # same PDF, via WebAssembly
+```
+
+Options: `--tune N` (files with several `X:` tunes; `--list` shows them),
+`--paper letter|a4`, `--staff-space PT` (default 5.5), `--breaks source|auto`
+(keep the input's line breaks, or fill lines), `--footer TEXT`.
+
+From JavaScript:
+
+```js
+import { toPostScript } from './src/index.js';
+const lib = fs.readFileSync('lib/sm_engrave.ps', 'utf8');
+const { ps, pages, size, warnings } = toPostScript(abcText, { lib, paper: 'a4' });
+// then: pscat --pdf out.pdf file.ps, or createRenderer().render(ps, { pdf: true })
+```
+
+## The editor
+
+[`site/editor.html`](site/editor.html) is built into one HTML file
+(`dist/editor.html`) that inlines the engraver, the glyph library, the samples
+and pscat's JavaScript glue, and loads `pscat.wasm` from beside it. It renders
+as you type, shows parse warnings and PostScript errors, and downloads the
+source, the PostScript or a PDF. `dist/sheet-music-editor-offline.html` also
+carries the WebAssembly (gzipped, ~7 MB) and works straight from disk with no
+network.
+
+```sh
+npm run build && npm run serve           # http://localhost:8765/editor.html
+```
+
+## Notation support
+
+ABC 2.1 as used for folk tunes, hymns and simple keyboard music, plus a
+MusicXML subset; [`docs/notation.md`](docs/notation.md) has the full table and
+what is not supported yet.
+
+## Samples
+
+All in [`samples/`](samples/): public-domain tunes transcribed for this
+project and dedicated to the public domain (CC0 1.0); provenance in
+[`samples/SOURCES.md`](samples/SOURCES.md).
+
+| | |
+|---|---|
+| `amazing-grace.abc` | hymn, two verses of lyrics, melismas, pickup |
+| `greensleeves.abc` | minor key, accidentals, two strains |
+| `drunken-sailor.abc` | Dorian mode, repeats, part labels |
+| `ode-to-joy.abc` | piano: two staves with brace, 1st/2nd endings |
+| `frere-jacques.musicxml` | MusicXML: lyrics with accents, harmony, round entries |
+| `twinkle.abc` | lyrics and chord symbols |
+| `feature-tour.abc` | test piece: tuplets, grace notes, 16ths, dynamics, hairpins, key/meter/clef changes, multi-measure rest |
+
+## Development
+
+```sh
+npm test                    # parser units, golden hashes, CLI/WASM PDF parity
+node scripts/render-samples.mjs   # renders/*.png + renders/contact-sheet.png: look at them
+node scripts/update-golden.mjs    # after an intended change to the output
+npm run build               # dist/ (the GitHub Pages site)
+```
+
+Agent skills for writing and rendering scores, and for working on the
+engraver, are in [`.claude/skills/`](.claude/skills/). `CLAUDE.md` has the
+project rules.
+
+## pscat
+
+Pinned in `.pscat-version` and `pscat.lock.json` (release assets by SHA-256),
+following [PSCatLabs/print-shop](https://github.com/PSCatLabs/print-shop)'s
+engine-fetch pattern. What was hard or missing is logged in
+[`docs/FRICTION.md`](docs/FRICTION.md), and the issues it led to are filed on
+[PSCatLabs/pscat](https://github.com/PSCatLabs/pscat/issues).
+
+## Licence
+
+Code: MIT ([LICENSE](LICENSE)). Samples: CC0 1.0. pscat (fetched, not
+vendored in git): MIT or Apache-2.0, with OFL-1.1 / LPPL-1.3c fonts. The
+site ships its notices in `engine/`.
