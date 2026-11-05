@@ -1,0 +1,14 @@
+X:1
+T:Feature Tour
+T:an original test piece for the engraver
+C:ArtColony sheet_music
+R:study
+Z:CC0 1.0 — written for this project
+M:4/4
+L:1/8
+Q:"Allegretto" 1/4=108
+K:D
+|: !mf!"D"A2 (3ABA !>!d2 fd | "G"(B/c/d/e/ f/e/d/c/) B4 | "A7"{g}a2 .a.a !trill!g3 e | "D"!fermata!d8 :|
+!p!!crescendo(!"Bm"F,A,DF A2 d2 | "Em"G3 F/E/ !crescendo)!D2 !f!E2 | "A"[A,EAc]4 [A,DFd]4- | [A,DFd]8 |
+[K:Bb][M:3/4] "Bb"B,2 {/c}B A G F | "Eb"(E D C) =B,2 z2 | "F7"[CEA]6 | Z2 |
+[K:clef=bass] "Gm"G,,2 _A,,2 =A,,2 | "Cm"(3C,D,E, F,2 G,2 | [K:clef=treble] "F"!diminuendo(!a'2 f'2 !diminuendo)!c'2 | "Bb"!pp!b6 |]

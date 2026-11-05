@@ -1,0 +1,25 @@
+X:1
+T:Ode to Joy
+T:from the Ninth Symphony, arranged for piano
+C:Ludwig van Beethoven (1824)
+S:Public domain melody; simple left hand written for this project
+Z:Arrangement for ArtColony/sheet_music, CC0 1.0
+M:4/4
+L:1/4
+Q:1/4=112
+%%score {RH LH}
+V:RH clef=treble
+V:LH clef=bass
+K:D
+V:RH
+|: "D"F F G A | "A"A G F E | "D"D D E F |1 "A"F>E E2 :|2 "A"E>D "D"D2 ||
+V:LH
+|: D,2 A,,2 | C,2 A,,2 | D,2 F,,2 |1 A,,2 A,,2 :|2 A,,2 D,2 ||
+V:RH
+"A"E E F D | E F/G/ F D | E F/G/ F E | "D"D E "A"A,2 |
+V:LH
+C,2 D,2 | C,2 D,2 | C,2 A,,2 | F,,2 A,,2 |
+V:RH
+"D"F F G A | "A"A G F E | "D"D D E F | "A"E>D "D"D2 |]
+V:LH
+D,2 A,,2 | C,2 A,,2 | D,2 F,,2 | A,,2 [D,,D,]2 |]

@@ -1,0 +1,15 @@
+{
+  "comment": "The pscat release this project is pinned to. scripts/fetch-pscat.mjs downloads these assets from the GitHub release and refuses any whose SHA-256 differs. Keep version in step with .pscat-version.",
+  "version": "0.7.0-rc.4",
+  "base": "https://github.com/PSCatLabs/pscat/releases/download/v0.7.0-rc.4/",
+  "npm": {
+    "file": "pscat-0.7.0-rc.4.tgz",
+    "sha256": "773fe8ef93da2c22ca085a53de5f2dbc00312dfe1f714a7502b35bb22b8f76c8"
+  },
+  "cli": {
+    "darwin-arm64": { "file": "pscat-0.7.0-rc.4-aarch64-apple-darwin.tar.gz", "sha256": "8db018fe31554856f02a4a8a1e9625a40c0ad4c7a58e18f0403638c9f4e1fbb6" },
+    "darwin-x64": { "file": "pscat-0.7.0-rc.4-x86_64-apple-darwin.tar.gz", "sha256": "830846b9ed36362939f01dc5dcb21809b909148884b453c14e2ef2119754775d" },
+    "linux-arm64": { "file": "pscat-0.7.0-rc.4-aarch64-unknown-linux-musl.tar.gz", "sha256": "7ae7e9f51091abad85f5977c111e8302677039fcf86741fa5b7a1aba365f9994" },
+    "linux-x64": { "file": "pscat-0.7.0-rc.4-x86_64-unknown-linux-musl.tar.gz", "sha256": "9637b09a0b4ddf60dfc83da1b235df44528f3eba9515766b21350c9de0639ff1" }
+  }
+}

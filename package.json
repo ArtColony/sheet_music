@@ -1,0 +1,19 @@
+{
+  "name": "sheet-music",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic sheet music engraving: ABC and MusicXML in, PostScript out, rendered to PDF by pscat (CLI or WebAssembly).",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "bin": { "sheet": "./bin/sheet.mjs" },
+  "scripts": {
+    "pscat:fetch": "node scripts/fetch-pscat.mjs",
+    "pretest": "node scripts/fetch-pscat.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "samples": "node scripts/render-samples.mjs",
+    "prebuild": "node scripts/fetch-pscat.mjs",
+    "build": "node scripts/build-site.mjs",
+    "serve": "node scripts/serve.mjs"
+  }
+}
