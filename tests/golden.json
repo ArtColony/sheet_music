@@ -37,15 +37,15 @@
   },
   "psEngine": {
     "ps": {
-      "amazing-grace.abc": "84c3d5643e6594b5743c520871eb40d0845f3a88a240ca96dd5b7fd9ec4bd003",
-      "camptown-races.abc": "d4bcfdfeb76570411e88328baafbec199d7c6ad57cf7d3b912b30b3cf5825129",
-      "drunken-sailor.abc": "8134bbc2012573eecc8332ae3b11c15bb7d45313f95a339cabb758282e003694",
-      "feature-tour.abc": "a49d286827dde52ddfe50ae77682a7069f72a98ffa5e962396deea6b022b14b0",
-      "frere-jacques.musicxml": "cc7eee75a2aca6dbfa79e06411fad83367cf82668958b9d53734d02201701bce",
-      "greensleeves.abc": "e7eb7f027a5812f3c9b36d85ea678491678bc713d573d9c42c587c1783ee112a",
-      "mountain-king.abc": "eef9873ae4018024e01682ba5eb485b486863530545d39fc257bab3b16740ab0",
-      "ode-to-joy.abc": "80b373760bd07d1b23bc3741a6091a23942eb38732da15dd44115b9fda93f985",
-      "twinkle.abc": "78450aa8976eae32e7422746f23c369c02c4f0ed48cbe812a733db8f8cb23f98"
+      "amazing-grace.abc": "c555da1ac3489c7bb5ac1fafaba0b92af1d558cb571d66dbc871fc902ba3bc64",
+      "camptown-races.abc": "d0dc91a70fb2c694f2175bd4c03c62a9dc44069a1fac34ec704101ad872ccedd",
+      "drunken-sailor.abc": "a315bcc129c4557584e50d88f8242bc2f71978fecf9569365f72bfc7422dcb8c",
+      "feature-tour.abc": "f3016f46af580d70e9a3fbc894fcfb8454e6a2e491603eaa2f37544921cf0242",
+      "frere-jacques.musicxml": "2d90ae6eeaca4327f030c3422ef158284105ef03034d9e2721f0545f98e779e9",
+      "greensleeves.abc": "ba7e8e321e270eeba250ca05ad5a3f717416afede7f0f40c06169dc20f7e6483",
+      "mountain-king.abc": "eec4f76c2d1953750c9911f83d1c0d449c6a70b602ada7a1cd8db51e5a456387",
+      "ode-to-joy.abc": "1bf175c36ec5f6b60af7285fd147aab3f70116e6a2d24f532e7a61570faf1429",
+      "twinkle.abc": "4eb4137563da207446d48527c5d83295a4a5153a3ffe6319aa73ef457368b347"
     },
     "pdf": {
       "darwin-arm64": {

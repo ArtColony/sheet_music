@@ -33,10 +33,12 @@ export const LIB = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
 export const ABC_LIB = readFileSync(path.join(root, 'lib/sm_abc.ps'), 'utf8');
 const parseLibPath = path.join(root, 'lib/sm_abc_parse.ps');
 export const PARSE_LIB = existsSync(parseLibPath) ? readFileSync(parseLibPath, 'utf8') : null;
+const transposeLibPath = path.join(root, 'lib/sm_transpose.ps');
+export const TRANSPOSE_LIB = existsSync(transposeLibPath) ? readFileSync(transposeLibPath, 'utf8') : null;
 
 /** The self-contained PostScript-engraver document for src (src/psdoc.js). */
 export function psEngineDoc(src, opts = {}) {
-  return selfContainedPS(src, { ...opts, engraveLib: LIB, abcLib: ABC_LIB, parseLib: opts.noParser ? null : PARSE_LIB });
+  return selfContainedPS(src, { ...opts, engraveLib: LIB, abcLib: ABC_LIB, parseLib: opts.noParser ? null : PARSE_LIB, transposeLib: TRANSPOSE_LIB });
 }
 /** Pages in a PDF pscat wrote. */
 export const pdfPages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
@@ -124,13 +126,13 @@ async function main(argv) {
       if (ext === '.pdf') writeFileSync(out, finish(readFileSync(out)));
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   }
-  const tr = r.transposed ? `, transposed ${r.transposed.semis > 0 ? "+" : ""}${r.transposed.semis}: key signature of ${r.transposed.key} major` : '';
-  console.error(`sheet: wrote ${out} (${r.pages} page${r.pages > 1 ? 's' : ''}${tr})`);
+  console.error(`sheet: wrote ${out} (${r.pages} page${r.pages > 1 ? 's' : ''}${transposedNote(r)})`);
 }
+
+const transposedNote = (r) => (r.transposed ? `, transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis}: key signature of ${r.transposed.key} major` : '');
 
 // --engine ps / ps-wasm: the layout runs in PostScript (lib/sm_abc.ps)
 async function psEngine(src, srcName, out, opts) {
-  if (opts.transpose) throw Error('--transpose needs the JS engraver (leave out --engine ps)');
   const r = psEngineDoc(src, opts);
   for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
@@ -158,7 +160,7 @@ async function psEngine(src, srcName, out, opts) {
       if (ext === '.pdf') { const pdf = readFileSync(out); pages = pdfPages(pdf); writeFileSync(out, finish(pdf)); }
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   }
-  console.error(`sheet: wrote ${out}${pages ? ` (${pages} page${pages > 1 ? 's' : ''})` : ''}, PostScript engraver`);
+  console.error(`sheet: wrote ${out}${pages ? ` (${pages} page${pages > 1 ? 's' : ''}${transposedNote(r)})` : transposedNote(r) ? ` (${transposedNote(r).slice(2)})` : ''}, PostScript engraver`);
 }
 
 function writeSvgs(out, svgs) {

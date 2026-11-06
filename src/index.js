@@ -106,7 +106,8 @@ export function toPostScript(src, options = {}) {
 }
 
 // %%transpose in the tune, else in the ABC file header (before the first X:)
-function tuneTranspose(src, tuneSrc, format) {
+// (lib/sm_abc_parse.ps sm-abc-tune-transpose is the PostScript port)
+export function tuneTranspose(src, tuneSrc, format) {
   const own = sourceTranspose(tuneSrc);
   if (own || format !== 'abc') return own;
   const x = /^X:/m.exec(src);

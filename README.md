@@ -131,7 +131,10 @@ From PostScript, by hand: `score sm-abc-engrave`, or `score << /paper /a4
 ABC file, with no JavaScript at all, `(lib/sm_engrave.ps) run (lib/sm_abc.ps)
 run (song.abc) sm-abc-engrave-file` (it loads `lib/sm_abc_parse.ps` itself;
 `(song.abc) << /tune 1 >> sm-abc-engrave-file` for the second tune). See the header
-of `lib/sm_abc.ps`. `%%transpose` is ignored by this engine (with a warning).
+of `lib/sm_abc.ps`. Transposition runs in PostScript too
+([`lib/sm_transpose.ps`](lib/sm_transpose.ps), `score semis sm-score-transpose`):
+`--transpose N` and `%%transpose` work with `--engine ps`, and from PostScript
+`(song.abc) << /transpose 2 >> sm-abc-engrave-file` adds to the file's `%%transpose`.
 
 It covers everything the JS layout draws: title block, tempo, clefs, key and
 time signatures (also mid-line changes), spacing, line and page breaks, stems,
@@ -140,7 +143,7 @@ bars, repeats, voltas, chord symbols, text annotations, decorations, dynamics,
 hairpins, slurs, ties, tuplets, grace notes, lyrics, several staves, the footer
 and `%%annotation` marks; every sample is identical to the JS engraver's at
 300 dpi, or within anti-aliasing.
-Transposition, playback/MIDI, share links and the editor's live preview
+Playback/MIDI, share links and the editor's live preview
 stay on the JS engraver, which remains the reference.
 
 ## The editor

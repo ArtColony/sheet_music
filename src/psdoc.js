@@ -1,29 +1,36 @@
 // A self-contained PostScript document that engraves itself in pscat:
-// DSC header + lib/sm_engrave.ps + lib/sm_abc.ps (+ lib/sm_abc_parse.ps when
-// available) + a short driver + the source text after `currentfile`.
+// DSC header + lib/sm_engrave.ps + lib/sm_abc.ps (+ lib/sm_abc_parse.ps and
+// lib/sm_transpose.ps when available) + a short driver + the source text
+// after `currentfile`.
 //
 // The driver reads the source lines up to END_MARK. When sm-abc-parse is
 // defined (lib/sm_abc_parse.ps loaded) and the source is ABC, PostScript
 // parses it; otherwise it engraves the Score literal the JS parser wrote
 // (src/ps.js psLiteral), which is embedded as a fallback. Either way the
-// layout and drawing are lib/sm_abc.ps's.
-import { parse, parseAnnotations } from './index.js';
+// layout and drawing are lib/sm_abc.ps's. Transposition (options.transpose
+// plus any %%transpose line) is done in PostScript too: the options carry
+// /transpose, sm-abc-engrave-string adds the source's %%transpose, and the
+// Score literal fallback gets the total.
+import { parse, parseAnnotations, tuneTranspose } from './index.js';
 import { splitTunes } from './abc.js';
 import { PAPERS } from './layout.js';
 import { psLiteral } from './ps.js';
-import { sourceTranspose } from './transpose.js';
+import { transposeScore } from './transpose.js';
 
 export const END_MARK = '%%SM-ABC-END';
 const dscText = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '?');
 
 /**
  * options: engraveLib (lib/sm_engrave.ps text, required), abcLib
- * (lib/sm_abc.ps, required), parseLib (lib/sm_abc_parse.ps, optional), tune,
- * paper ('letter'|'a4'), sp, breaks, footer, format, embedScore (default true).
- * Returns { ps, size, title, composer, format, warnings }.
+ * (lib/sm_abc.ps, required), parseLib (lib/sm_abc_parse.ps, optional),
+ * transposeLib (lib/sm_transpose.ps, optional; without it pscat runs it from
+ * lib/ when the score needs transposing), tune, paper ('letter'|'a4'), sp,
+ * breaks, footer, format, transpose (semitones, added to any %%transpose
+ * line), embedScore (default true).
+ * Returns { ps, size, title, composer, format, warnings, transposed }.
  */
 export function selfContainedPS(src, options = {}) {
-  const { engraveLib, abcLib, parseLib } = options;
+  const { engraveLib, abcLib, parseLib, transposeLib } = options;
   if (!engraveLib || !abcLib) throw Error('selfContainedPS needs options.engraveLib and options.abcLib');
   const parsed = parse(src, options);
   const tune = options.tune || 0;
@@ -34,17 +41,18 @@ export function selfContainedPS(src, options = {}) {
   const tuneSrc = parsed.format === 'abc' ? splitTunes(src)[tune] || '' : src;
   const annotations = parseAnnotations(tuneSrc).map((a) => ({ page: a.page, type: a.type, x: a.x, y: a.y, w: a.w, h: a.h, rgb: a.rgb, text: a.text }));
   const warnings = [...parsed.warnings];
-  const head = parsed.format === 'abc' && /^X:/m.exec(src);
-  if (sourceTranspose(tuneSrc) || (head && sourceTranspose(src.slice(0, head.index)))) {
-    warnings.push('%%transpose is ignored by the PostScript engraver (leave out --engine ps to transpose)');
-  }
+  // transposition: the option goes to sm-abc-engrave-string, which adds the
+  // source's %%transpose itself; the Score literal fallback needs the total
+  const optSemis = Math.trunc(options.transpose || 0);
+  const semis = tuneTranspose(src, tuneSrc, parsed.format) + optSemis;
   const paper = PAPERS[options.paper] ? options.paper : 'letter';
   const [W, H] = PAPERS[paper];
   const opts = { paper: `/${paper}`, 'staff-space': options.sp || 5.5, breaks: options.breaks || 'source', tune, format: parsed.format };
   const optLit = '<< /paper /' + paper + ' /staff-space ' + psLiteral(opts['staff-space'])
     + ' /breaks ' + psLiteral(opts.breaks) + ' /tune ' + tune + ' /format ' + psLiteral(parsed.format)
     + (options.footer !== undefined ? ' /footer ' + psLiteral(String(options.footer)) : '')
-    + (annotations.length ? ' /annotations ' + psLiteral(annotations) : '') + ' >>';
+    + (annotations.length ? ' /annotations ' + psLiteral(annotations) : '')
+    + (optSemis ? ' /transpose ' + optSemis : '') + ' >>';
   const title = score.meta.title || 'Untitled';
   const embed = options.embedScore !== false;
   const lines = [
@@ -58,6 +66,7 @@ export function selfContainedPS(src, options = {}) {
     engraveLib.trimEnd(),
     abcLib.trimEnd(),
     parseLib ? parseLib.trimEnd() : null,
+    transposeLib ? transposeLib.trimEnd() : null,
     '%%EndProlog',
     '%%BeginSetup',
     `/sm-sp ${opts['staff-space']} def`,
@@ -71,9 +80,14 @@ export function selfContainedPS(src, options = {}) {
     '/sm-abc-source exch def',
     '/sm-abc-parse where { pop sm-abc-options /format get (abc) eq } { false } ifelse',
     'sm-abc-score null eq or',
-    '{ sm-abc-source sm-abc-options sm-abc-engrave-string } { sm-abc-score sm-abc-options sm-abc-engrave } ifelse',
+    semis === optSemis
+      ? '{ sm-abc-source sm-abc-options sm-abc-engrave-string } { sm-abc-score sm-abc-options sm-abc-engrave } ifelse'
+      : `{ sm-abc-source sm-abc-options sm-abc-engrave-string } { sm-abc-score sm-abc-options dup length 1 add dict copy dup /transpose ${semis} put sm-abc-engrave } ifelse`,
     '%%EOF',
     '',
   ].filter((l) => l !== null);
-  return { ps: lines.join('\n'), size: [W, H], title, composer: score.meta.composer || '', format: parsed.format, warnings };
+  // what the PostScript engraver will print, for the caller's messages and
+  // the PDF's Subject (the Score literal above stays untransposed)
+  const transposed = semis ? transposeScore(score, semis).transposed : null;
+  return { ps: lines.join('\n'), size: [W, H], title, composer: score.meta.composer || '', format: parsed.format, warnings, transposed };
 }

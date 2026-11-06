@@ -21,6 +21,13 @@
 %                                       /text >> ...]  the %%annotation marks of
 %                                       tune (0-based), as lib/sm_abc.ps's
 %                                       options /annotations take them
+%   (abc text) tune sm-abc-tune-transpose -> semitones  the tune's (0-based)
+%                                       %%transpose N line, else the file
+%                                       header's (before the first X:), else 0,
+%                                       as src/index.js tuneTranspose; it is
+%                                       not part of the Score, which stays
+%                                       equal to the JS parse. lib/sm_transpose.ps
+%                                       applies it (sm-score-transpose)
 %
 % Score values: strings are PS strings (UTF-8 bytes), Fracs are [num den]
 % integer arrays reduced by gcd, JS null is null, booleans are booleans.
@@ -1210,6 +1217,41 @@ sm-abcp-dict begin
   [ exch { sm-abcp-annot dup null eq { pop } if } forall ]
 } bind def
 
+% ================================================================ %%transpose
+% The directive is not part of the Score (it stays deep-equal to the JS
+% parse); src/index.js reads it from the text, as these do.
+% s i sm-abcp-blanks j : end of the run of spaces and tabs starting at i
+/sm-abcp-blanks { { 2 copy sm-abcp-ch dup 32 eq exch 9 eq or { 1 add } { exit } ifelse } loop exch pop } bind def
+% [lines] sm-abcp-srctr n : the first line matching
+%   ^[ \t]*(<!--[ \t]*)?%%transpose[ \t]+([+-]?\d+)  -> that number, else 0
+%   (src/transpose.js sourceTranspose)
+/sm-abcp-srctr {
+  0 exch { /sm-abcp-xl exch def
+    /sm-abcp-xp sm-abcp-xl 0 sm-abcp-blanks def
+    sm-abcp-xl sm-abcp-xp sm-abcp-tail (<!--) sm-abcp-pre { /sm-abcp-xp sm-abcp-xl sm-abcp-xp 4 add sm-abcp-blanks def } if
+    sm-abcp-xl sm-abcp-xp sm-abcp-tail (%%transpose) sm-abcp-pre {
+      /sm-abcp-xq sm-abcp-xp 11 add def
+      /sm-abcp-xr sm-abcp-xl sm-abcp-xq sm-abcp-blanks def
+      /sm-abcp-xneg sm-abcp-xl sm-abcp-xr sm-abcp-ch 45 eq def
+      /sm-abcp-xst sm-abcp-xr sm-abcp-xl sm-abcp-xr sm-abcp-ch dup 43 eq exch 45 eq or { 1 add } if def
+      /sm-abcp-xe sm-abcp-xl sm-abcp-xst sm-abcp-digits def
+      sm-abcp-xr sm-abcp-xq gt sm-abcp-xe sm-abcp-xst gt and {
+        pop sm-abcp-xl sm-abcp-xst sm-abcp-xe sm-abcp-int sm-abcp-xneg { neg } if exit } if
+    } if
+  } forall
+} bind def
+% text tune sm-abcp-tunetr n : %%transpose of that tune (0-based), else of
+%   the file header before the first X: line (src/index.js tuneTranspose)
+/sm-abcp-tunetr {
+  /sm-abcp-xtn exch def sm-abcp-tunelines
+  dup length sm-abcp-xtn gt sm-abcp-xtn 0 ge and { sm-abcp-xtn get } { pop [] } ifelse sm-abcp-srctr
+  dup 0 eq {
+    pop /sm-abcp-xhead sm-abcp-lnew def /sm-abcp-xseen false def
+    sm-abcp-alines { dup (X:) sm-abcp-pre { pop /sm-abcp-xseen true def exit } if sm-abcp-xhead exch sm-abcp-lpush } forall
+    sm-abcp-xseen { sm-abcp-xhead sm-abcp-larr sm-abcp-srctr } { 0 } ifelse
+  } if
+} bind def
+
 % path sm-abcp-readfile text
 /sm-abcp-readfile {
   (r) file /sm-abcp-rf exch def /sm-abcp-rsb sm-abcp-sbnew def
@@ -1266,5 +1308,6 @@ end % sm-abcp-dict
 /sm-abc-parse-file { sm-abc-parse-file-all 0 get } bind def
 /sm-abc-json { sm-abcp-dict begin sm-abcp-json end } bind def
 /sm-abc-annotations { sm-abcp-dict begin sm-abcp-annots end } bind def
+/sm-abc-tune-transpose { sm-abcp-dict begin sm-abcp-tunetr end } bind def
 
 end % userdict

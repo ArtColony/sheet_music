@@ -1,0 +1,211 @@
+%!PS
+% sm_transpose.ps -- transpose a Score dict by a number of semitones.
+%
+% Part of ArtColony/sheet_music (MIT). A port of src/transpose.js: the
+% Score is the structure lib/sm_abc_parse.ps builds (and src/ps.js psLiteral
+% writes); tests/ps-transpose.test.mjs checks, sample by sample and interval
+% by interval, that the result equals the JS transposeScore's.
+%
+% Public entry points
+%   score semis sm-score-transpose -> score
+%       Transposes the score IN PLACE (the same dict comes back, modified, as
+%       transposeScore does in JS) by semis semitones (any integer; a real is
+%       truncated, null or 0 leaves the score untouched). Sets
+%       score /transposed << /semis semis /key (G) >>: the new major key name
+%       of the first key signature, e.g. (Bb), (F#).
+%   semis fifths sm-transpose-fifths-shift -> df
+%       the line-of-fifths shift for semis that leaves a key of `fifths`
+%       with the fewest accidentals (fifthsShift)
+%   (step) oct alter semis df respell sm-transpose-pitch -> << /step /oct /alter >>
+%       move one pitch (movePitch)
+%   (text) df sm-transpose-chord -> (text)
+%       chord symbols, space separated: (Am7) 2 -> (Bm7), (Bb/D) 2 -> (C/E);
+%       roots written with # b or the UTF-8 sharp/flat signs come back with
+%       ASCII # or b; a token that is not a chord name is kept (transposeChord)
+%
+% How: pitches move along the line of fifths (F C G D A E B = -1..5, a sharp
+% is +7, a flat -7), so spelling follows the new key. The shift is chosen
+% once, from the first key; every key change, explicit accidental and chord
+% symbol then moves by it. Notes without an accidental keep none: they follow
+% the new key signature exactly as before. A note with an accidental that
+% would need a triple one is respelled enharmonically.
+%
+% Example (headless, from the repository root):
+%   (lib/sm_abc_parse.ps) run (lib/sm_transpose.ps) run
+%   (samples/twinkle.abc) sm-abc-parse-file 2 sm-score-transpose
+%   /transposed get /key get =        prints: D
+% lib/sm_abc.ps applies this for the options /transpose N (and %%transpose
+% lines, through sm-abc-engrave-string); it runs this file on demand.
+%
+% Conventions: every name starts with sm-; internals are sm-tr-* and live in
+% the private dict sm-tr-dict, which the entry points begin/end. Nothing
+% recurses; integer arithmetic only.
+
+userdict begin
+
+/sm-tr-dict 80 dict def
+sm-tr-dict begin
+
+/sm-tr-lof << /F -1 /C 0 /G 1 /D 2 /A 3 /E 4 /B 5 >> def
+/sm-tr-letters [(F) (C) (G) (D) (A) (E) (B)] def
+/sm-tr-pc << /C 0 /D 2 /E 4 /F 5 /G 7 /A 9 /B 11 >> def
+/sm-tr-alter << /sharp 1 /dsharp 2 /flat -1 /dflat -2 /natural 0 >> def
+/sm-tr-accof << 1 (sharp) 2 (dsharp) -1 (flat) -2 (dflat) 0 (natural) >> def
+
+/sm-tr-copy { dup length string copy } bind def
+% a n sm-tr-mod r   (0 <= r < n, as ((a % n) + n) % n)
+/sm-tr-mod { dup 3 1 roll mod 1 index add exch mod } bind def
+% d k sm-tr-get v|null
+/sm-tr-get { 2 copy known { get } { pop pop null } ifelse } bind def
+% x sm-tr-sign -1|0|1
+/sm-tr-sign { dup 0 gt { pop 1 } { 0 lt { -1 } { 0 } ifelse } ifelse } bind def
+% [(a) (b) ...] sm-tr-concat (ab...)
+/sm-tr-concat {
+  0 1 index { length add } forall string exch
+  0 exch { 3 copy putinterval length add } forall pop
+} bind def
+% s sm-tr-name /s   (a string or a name, as a dict key)
+/sm-tr-name { dup type /stringtype eq { cvn } if } bind def
+
+% p sm-tr-fromlof (step) alter
+/sm-tr-fromlof {
+  1 add dup 7 sm-tr-mod            % p+1 i
+  dup sm-tr-letters exch get        % p+1 i step
+  3 1 roll sub 7 idiv
+} bind def
+
+% semis fifths sm-tr-shift df
+/sm-tr-shift {
+  /sm-tr-sf exch def 7 mul 12 sm-tr-mod /sm-tr-sb exch def
+  sm-tr-sf sm-tr-sb add abs sm-tr-sf sm-tr-sb add 12 sub abs lt
+  { sm-tr-sb } { sm-tr-sb 12 sub } ifelse
+} bind def
+
+% step oct alter semis df respell sm-tr-move (step) alter oct
+/sm-tr-move {
+  /sm-tr-mr exch def /sm-tr-mdf exch def /sm-tr-msemis exch def
+  /sm-tr-malter exch def /sm-tr-moct exch def /sm-tr-mstep exch sm-tr-name def
+  /sm-tr-mmidi 12 sm-tr-moct mul sm-tr-pc sm-tr-mstep get add sm-tr-malter add sm-tr-msemis add def
+  /sm-tr-mp sm-tr-lof sm-tr-mstep get 7 sm-tr-malter mul add sm-tr-mdf add def
+  sm-tr-mp sm-tr-fromlof
+  sm-tr-mr { dup abs 2 gt } { false } ifelse {
+    sm-tr-sign 12 mul sm-tr-mp exch sub exch pop sm-tr-fromlof
+  } if                                             % step alter
+  /sm-tr-ma exch def /sm-tr-ms exch def
+  sm-tr-ms sm-tr-copy sm-tr-ma
+  sm-tr-mmidi sm-tr-pc sm-tr-ms cvn get sub sm-tr-ma sub 12 idiv
+} bind def
+
+% ---------------------------------------------------------------- chord symbols
+% t i sm-tr-acc k len   : accidental at byte i of t: # b U+266F U+266D (UTF-8)
+%                         -> its alteration and byte length (0 0 if none)
+/sm-tr-acc {
+  2 copy exch length lt {
+    2 copy get dup 35 eq { pop pop pop 1 1 } { 98 eq { pop pop -1 1 } {
+      dup 3 add 2 index length le {
+        3 getinterval dup (\342\231\257) eq { pop 1 3 } { (\342\231\255) eq { -1 3 } { 0 0 } ifelse } ifelse
+      } { pop pop 0 0 } ifelse } ifelse } ifelse
+  } { pop pop 0 0 } ifelse
+} bind def
+/sm-tr-isletter { dup 65 ge exch 71 le and } bind def
+% letter-byte acc sm-tr-root (name)
+/sm-tr-root {
+  7 mul exch 1 string dup 0 4 -1 roll put cvn sm-tr-lof exch get add sm-tr-cdf add
+  { dup 12 gt { 12 sub } { exit } ifelse } loop
+  { dup -8 lt { 12 add } { exit } ifelse } loop
+  sm-tr-fromlof dup 0 gt { pop (#) } { 0 lt { (b) } { () } ifelse } ifelse
+  2 array astore sm-tr-concat
+} bind def
+% token sm-tr-token token'
+/sm-tr-token {
+  /sm-tr-t exch def
+  sm-tr-t length 0 gt { sm-tr-t 0 get sm-tr-isletter } { false } ifelse {
+    sm-tr-t 1 sm-tr-acc /sm-tr-tl exch def /sm-tr-ta exch def
+    sm-tr-t 1 sm-tr-tl add dup sm-tr-t length exch sub getinterval /sm-tr-rest exch def
+    sm-tr-rest (/) search {                         % post (/) pre
+      /sm-tr-mid exch def pop /sm-tr-post exch def
+      sm-tr-post length 0 gt { sm-tr-post 0 get sm-tr-isletter } { false } ifelse {
+        sm-tr-post 1 sm-tr-acc /sm-tr-bl exch def /sm-tr-ba exch def
+        sm-tr-post length 1 sm-tr-bl add eq
+      } { false } ifelse
+      { [ sm-tr-t 0 get sm-tr-ta sm-tr-root sm-tr-mid (/) sm-tr-post 0 get sm-tr-ba sm-tr-root ] sm-tr-concat }
+      { sm-tr-t } ifelse
+    } {
+      pop [ sm-tr-t 0 get sm-tr-ta sm-tr-root sm-tr-rest ] sm-tr-concat
+    } ifelse
+  } { sm-tr-t } ifelse
+} bind def
+% text df sm-tr-chord text'
+/sm-tr-chord {
+  /sm-tr-cdf exch def /sm-tr-ctext exch def
+  [ { sm-tr-ctext ( ) search {
+        exch pop sm-tr-token exch /sm-tr-ctext exch def
+      } { sm-tr-token exit } ifelse } loop ]
+  % join with single spaces
+  [ exch true exch { exch not { ( ) exch } if false } forall pop ]
+  sm-tr-concat
+} bind def
+
+% ---------------------------------------------------------------- the score
+% f sm-tr-keyname (name)
+/sm-tr-keyname {
+  dup sm-tr-fromlof pop exch
+  dup 5 gt { pop (#) } { -1 lt { (b) } { () } ifelse } ifelse
+  2 array astore sm-tr-concat
+} bind def
+% key sm-tr-movekey -
+/sm-tr-movekey {
+  dup null eq { pop } {
+    dup /fifths sm-tr-get dup null eq { pop 0 } if sm-tr-df add
+    dup 7 gt { 12 sub } if dup -7 lt { 12 add } if
+    /fifths exch put } ifelse
+} bind def
+% note sm-tr-movenote -
+/sm-tr-movenote {
+  /sm-tr-n exch def
+  /sm-tr-nacc sm-tr-n /acc sm-tr-get def
+  /sm-tr-hasacc sm-tr-nacc null ne sm-tr-nacc false ne and
+    { sm-tr-nacc type /stringtype eq { sm-tr-nacc length 0 gt } { true } ifelse } { false } ifelse def
+  sm-tr-n /step get sm-tr-n /oct get
+  sm-tr-hasacc { sm-tr-alter sm-tr-nacc sm-tr-name sm-tr-get dup null eq { pop 0 } if } { 0 } ifelse
+  sm-tr-semis sm-tr-df sm-tr-hasacc sm-tr-move    % step alter oct
+  sm-tr-n /oct 3 -1 roll put
+  sm-tr-hasacc { sm-tr-n /acc sm-tr-accof 3 index get sm-tr-copy put } if
+  pop sm-tr-n /step 3 -1 roll put
+} bind def
+% notes-or-null sm-tr-notes -
+/sm-tr-notes {
+  dup type /arraytype eq 1 index type /packedarraytype eq or { { sm-tr-movenote } forall } { pop } ifelse
+} bind def
+/sm-tr-score { % score semis -> score
+  dup null eq { pop 0 } if cvi /sm-tr-semis exch def /sm-tr-S exch def
+  sm-tr-semis 0 ne {
+    /sm-tr-ik sm-tr-S /initial get /key get def
+    /sm-tr-df sm-tr-semis sm-tr-ik /fifths sm-tr-get dup null eq { pop 0 } if sm-tr-shift def
+    sm-tr-ik sm-tr-movekey
+    sm-tr-S /measures get { /sm-tr-m exch def
+      sm-tr-m /key sm-tr-get dup null ne { dup sm-tr-ik ne } { false } ifelse { sm-tr-movekey } { pop } ifelse
+      sm-tr-m /staves get { /events get { /sm-tr-e exch def
+        sm-tr-e /notes sm-tr-get sm-tr-notes
+        sm-tr-e /grace sm-tr-get dup null ne { /notes get sm-tr-notes } { pop } ifelse
+        sm-tr-e /chord sm-tr-get dup type /stringtype eq { dup length 0 gt } { false } ifelse
+          { sm-tr-df sm-tr-chord sm-tr-e /chord 3 -1 roll put } { pop } ifelse
+      } forall } forall
+    } forall
+    sm-tr-S /transposed << /semis sm-tr-semis /key sm-tr-ik /fifths get sm-tr-keyname >> put
+  } if
+  sm-tr-S
+} bind def
+
+end % sm-tr-dict
+
+% ---------------------------------------------------------------- public
+/sm-score-transpose { sm-tr-dict begin sm-tr-score end } bind def
+/sm-transpose-fifths-shift { sm-tr-dict begin sm-tr-shift end } bind def
+/sm-transpose-pitch {
+  sm-tr-dict begin sm-tr-move /sm-tr-po exch def /sm-tr-pa exch def
+  << /step 3 -1 roll /alter sm-tr-pa /oct sm-tr-po >> end
+} bind def
+/sm-transpose-chord { sm-tr-dict begin sm-tr-chord end } bind def
+
+end % userdict
