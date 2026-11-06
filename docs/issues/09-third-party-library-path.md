@@ -1,6 +1,6 @@
 # Third-party PostScript libraries: let a program find its own files, and let a plugin's library be read by pscat-mcp
 
-*Draft for PSCatLabs/pscat (not filed yet). Found while making
+*Filed as [PSCatLabs/pscat#1056](https://github.com/PSCatLabs/pscat/issues/1056). Found while making
 ArtColony/sheet_music's engraver usable by agents that have only pscat
 (sheet_music#7).*
 
