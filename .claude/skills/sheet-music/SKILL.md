@@ -9,6 +9,11 @@ The pipeline: **ABC or MusicXML → `bin/sheet.mjs` → PostScript → pscat →
 ABC is the authoring format: compact, plain text, and what you should write
 unless the user hands you MusicXML.
 
+**No Node, only pscat?** Use the `ps-sheet-music` skill: the same engraver
+in PostScript, `(lib/sheet.ps) run (tune.abc) sm-abc-engrave-file` with the
+pscat CLI or MCP tools, plus `sm-abc-check-file` to list warnings and bars
+that do not add up (docs/postscript-api.md).
+
 ## Setup (once)
 
 ```sh
@@ -123,5 +128,9 @@ Record provenance in `S:` / `Z:`; samples added to this repo also go in
 - **Editor:** `npm run build && npm run serve`, then open http://localhost:8765/editor.html: live preview, transpose, play, share links, PDF/MIDI download.
 - **JavaScript:** `toPostScript(text, { lib })` from `src/index.js` returns `{ ps, pages, size, warnings }`.
 - **MusicXML:** `node bin/sheet.mjs piece.musicxml` (uncompressed, partwise).
-- **pscat MCP tools**, if connected: `render_postscript` on the `.ps` file is a
-  quick look, but use `bin/sheet.mjs` and the pinned CLI for anything you keep.
+- **Headless, PostScript only:** `pscat --pdf tune.pdf --page 612x792 -e
+  '(lib/sheet.ps) run (tune.abc) sm-abc-engrave-file'` engraves with no
+  JavaScript; `(tune.abc) sm-abc-check-file` prints parse warnings and bars
+  off the meter. With the pscat MCP tools, `render_postscript` on a program
+  starting `(lib/sheet.ps) run` does the same. See the `ps-sheet-music` skill
+  and docs/postscript-api.md.

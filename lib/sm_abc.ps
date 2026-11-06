@@ -1653,7 +1653,8 @@ end % sm-ae-dict
       dup length 0 gt { 1 index exch /annotations exch put } { pop } ifelse } if
     exch sm-abc-parse-all                             % options [scores]
     dup length 2 index /tune known { 2 index /tune get } { 0 } ifelse le {
-      (sm-abc-engrave-string: the text has no tune number /tune + 1) = } if
+      (sm-abc: error: no tune /tune ) print 1 index /tune get 20 string cvs print
+      ( \(0-based\); the text has ) print dup length 20 string cvs print ( tune\(s\)) = } if
   } { exch sm-abc-parse } ifelse                      % options result
   1 index sm-abc-print-warnings
   % the parser may give a Score, a list of Scores or << /scores [...] >>; a

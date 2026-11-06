@@ -129,9 +129,24 @@ sm-sheet-dict begin
   (  bars ) print sm-sh-s /measures get length sm-sh-cvs print
   (  staves ) print sm-sh-s /staves get length sm-sh-cvs =
 } bind def
-% score sm-sh-bars n : print the bars whose length disagrees with the meter
-% (skipping a pickup, bar number 0, a short last bar, multi-measure rests
-% and free meter)
+% mi si sm-sh-mlen [n d] : the summed durations of staff si in measure mi
+/sm-sh-mlen {
+  exch sm-sh-ms exch get /staves get exch get /events get
+  [0 1] exch { /dur sm-sh-get dup null eq { pop } { sm-sh-fadd } ifelse } forall
+} bind def
+% mi sm-sh-pairs bool : is the short bar mi completed by a short neighbour
+% (a bar split around a section end: |: or || between its two halves)?
+/sm-sh-pairs {
+  /sm-sh-pi exch def false
+  [ sm-sh-pi 1 sub sm-sh-pi 1 add ] { /sm-sh-pj exch def
+    sm-sh-pj 0 ge sm-sh-pj sm-sh-ms length lt and {
+      sm-sh-pj sm-sh-si sm-sh-mlen sm-sh-len sm-sh-fadd sm-sh-want sm-sh-fcmp 0 eq or } if
+  } forall
+} bind def
+% score sm-sh-bars n : print the bars whose length disagrees with the meter.
+% Not reported: a pickup (bar number 0), multi-measure rests, free meter, and
+% short bars that are the last bar, end at a double or repeat bar line (they
+% complete a pickup), or make a whole bar with a short neighbour.
 /sm-sh-bars {
   /sm-sh-bs exch def /sm-sh-bad 0 def
   /sm-sh-tm sm-sh-bs /initial get /time get def
@@ -143,11 +158,14 @@ sm-sheet-dict begin
     sm-sh-m /mmCount sm-sh-get dup null eq { pop 0 } if 0 gt
     sm-sh-m /number get 0 eq or sm-sh-tm /den get 0 eq or not {
       0 1 sm-sh-m /staves get length 1 sub { /sm-sh-si exch def
-        /sm-sh-len [0 1] def
-        sm-sh-m /staves get sm-sh-si get /events get {
-          /dur sm-sh-get dup null eq { pop } { /sm-sh-len exch sm-sh-len sm-sh-fadd def } ifelse } forall
+        /sm-sh-len sm-sh-mi sm-sh-si sm-sh-mlen def
         /sm-sh-c sm-sh-len sm-sh-want sm-sh-fcmp def
-        sm-sh-c 0 ne sm-sh-mi sm-sh-ms length 1 sub eq sm-sh-c 0 lt and not and {
+        sm-sh-c 0 gt
+        sm-sh-c 0 lt {
+          sm-sh-mi sm-sh-ms length 1 sub eq
+          sm-sh-m /endBar sm-sh-get dup null eq { pop (single) } if (single) ne or
+          sm-sh-mi sm-sh-pairs or not
+        } { false } ifelse or {
           /sm-sh-bad sm-sh-bad 1 add def
           (sm-abc: bar ) print sm-sh-m /number get sm-sh-cvs print
           sm-sh-bs /staves get length 1 gt { (, staff ) print sm-sh-si 1 add sm-sh-cvs print } if
@@ -191,7 +209,7 @@ end % sm-sheet-dict
 } bind def
 % [options] sm-abc-engrave-here -
 /sm-abc-engrave-here {
-  dup type /dicttype eq { } { 0 dict } ifelse
+  count 0 gt { dup type /dicttype eq } { false } ifelse not { 0 dict } if
   sm-abc-here exch sm-abc-engrave-string
 } bind def
 /sm-abc-list-string { sm-sheet-dict begin sm-sh-list end } bind def

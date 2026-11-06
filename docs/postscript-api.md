@@ -183,9 +183,12 @@ sm-abc: bar 10: 7/8 of a whole note, M:3/4 wants 3/4
 sm-abc: check: 1 tune(s), 0 warning(s), 1 bar(s) off the meter
 ```
 
-The bar check skips a pickup (bar number 0), a short last bar (the end of a
-pickup), multi-measure rests and free meter (`M:none`). A short or long bar
-in the middle of a repeat is reported too; decide whether it is meant.
+Every bar that is too long is reported. A short bar is reported unless it is
+the pickup (bar number 0), the last bar, ends at a double or repeat bar line
+(`||`, `:|`: it completes a pickup), or makes a whole bar with a short
+neighbour (a bar split around a section start). Multi-measure rests and free
+meter (`M:none`) are not checked. (`feature-tour.abc` bar 10 really is an
+eighth too long.)
 `K:2#` is the key signature (two sharps; `3b` three flats). The meter shown is
 the first one.
 
@@ -535,18 +538,18 @@ and `sm-sh-` (`sheet.ps`).
 | `sm-sheet-version` | value | [lib/sheet.ps](../lib/sheet.ps#L50) |  |
 | `sm-sheet-dict` | value | [lib/sheet.ps](../lib/sheet.ps#L51) |  |
 | `sm-lib-dir` | value | [lib/sheet.ps](../lib/sheet.ps#L67) |  |
-| `sm-abc-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L189) |  |
-| `sm-abc-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L193) | [options] sm-abc-engrave-here - |
-| `sm-abc-list-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L197) |  |
-| `sm-abc-list-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L198) |  |
-| `sm-abc-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L199) |  |
-| `sm-abc-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L200) |  |
+| `sm-abc-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L207) |  |
+| `sm-abc-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L211) | [options] sm-abc-engrave-here - |
+| `sm-abc-list-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L215) |  |
+| `sm-abc-list-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L216) |  |
+| `sm-abc-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L217) |  |
+| `sm-abc-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L218) |  |
 | `sm-r2` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L57) |  |
 | `sm-abc-engrave` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1588) |  |
 | `sm-abc-readsrc` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1593) | file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF) |
 | `sm-abc-print-warnings` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1610) |  |
 | `sm-abc-engrave-string` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1619) |  |
-| `sm-abc-engrave-file` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1648) |  |
+| `sm-abc-engrave-file` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1649) |  |
 | `sm-abc-warnings` | value | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1262) |  |
 | `sm-abc-parse-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1263) |  |
 | `sm-abc-parse` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1264) |  |
