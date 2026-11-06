@@ -40,6 +40,10 @@
 % of the procedures recurse except the JSON printer, which keeps its state
 % on the operand stack. Nothing here reads the clock or a random source.
 
+% Everything is defined in userdict, so the file can be run from inside
+% another dict and still be found once that dict is ended.
+userdict begin
+
 /sm-abcp-dict 600 dict def
 sm-abcp-dict begin
 
@@ -1156,3 +1160,5 @@ end % sm-abcp-dict
 /sm-abc-parse-file-all { sm-abcp-dict begin sm-abcp-readfile end sm-abc-parse-all } bind def
 /sm-abc-parse-file { sm-abc-parse-file-all 0 get } bind def
 /sm-abc-json { sm-abcp-dict begin sm-abcp-json end } bind def
+
+end % userdict

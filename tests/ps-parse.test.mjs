@@ -66,6 +66,13 @@ test('sm-abc-parse-file and sm-abc-parse give the first tune', { skip }, () => {
   assert.deepEqual(got2.scores, want.scores.slice(0, 1));
 });
 
+test('loaded inside another dict, no X: line, empty text', { skip }, () => {
+  const src = 'T:Bare\nK:G\nGAB c2 |';
+  const got = runPS(`10 dict begin ${LIB}\nend ${psLiteral(src)} sm-abc-parse-all () sm-abc-parse 2 array astore`);
+  assert.deepEqual(got.scores, [expected(src).scores, expected('').scores[0]]);
+  assert.deepEqual(got.warnings, []);
+});
+
 test('CRLF line ends parse like LF', { skip }, () => {
   const src = readFileSync(path.join(root, 'samples/amazing-grace.abc'), 'utf8').replace(/\n/g, '\r\n');
   assert.deepEqual(runPS(`${psLiteral(src)} sm-abc-parse-all`), expected(src));
@@ -77,13 +84,14 @@ test('every name it defines, temporaries included, starts with sm-', { skip }, (
   const src = readFileSync(path.join(root, 'tests/fixtures/parse-edge.abc'), 'utf8');
   const prog = `/sm-t-before userdict length dict def userdict { pop sm-t-before exch true put } forall
 ${LIB}
-${psLiteral(src)} sm-abc-parse-all pop
+${psLiteral(src)} sm-abc-parse-all sm-abc-json
+${psLiteral(path.join(root, 'samples/twinkle.abc'))} sm-abc-parse-file pop (\\n) print
 userdict { pop dup sm-t-before exch known { pop } { 64 string cvs print ( ) print } ifelse } forall
 sm-abcp-dict { pop 64 string cvs print ( ) print } forall (\\n) print
 0 0 1 1 rectfill showpage
 `;
   const out = pscat(prog);
-  const names = out.split('\n')[0].trim().split(/\s+/);
+  const names = out.split('\n')[1].trim().split(/\s+/);
   assert.ok(names.length > 100, `only ${names.length} names`);
   assert.deepEqual(names.filter((n) => !n.startsWith('sm-')), []);
 });

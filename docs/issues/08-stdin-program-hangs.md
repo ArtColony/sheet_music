@@ -23,8 +23,12 @@ for (let i = 0; i < 40; i++) {
 console.log(hung, 'of 40 hung');
 ```
 
-Result here: `2 of 40 hung` for the 70 KB program, `0 of 40` for the same
-program without the comment line. Each run that does finish takes about 7 ms.
+Result here: `2 of 40 hung` for the 70 KB program in one loop, then `0 of 40`
+and `0 of 100` in later loops at 60-140 KB, so it is intermittent (perhaps
+load-dependent: other jobs shared the machine). Passing the program as a file path: 0 hangs in 320 runs. The test that
+first hit it (12 pscat calls with 67 KB programs on stdin) hung on one call in
+each of three runs, a different call each time. Not yet a reliable repro: this
+draft is not filed until one is found.
 
 ## Expected
 
