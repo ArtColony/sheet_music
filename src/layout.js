@@ -440,12 +440,15 @@ export function engrave(score, options = {}) {
   pages[0].push(...titleLines);
   const bottomY = o.bottom + 14;
   const sysTop = [];
+  let onPage = 0; // systems placed on the current page (their lines are drawn later)
   sysV.forEach((v, si) => {
     const h = v.height * sp;
-    if (y - h < bottomY && pages[pages.length - 1].length > (pages.length === 1 ? titleLines.length : 0)) {
+    if (y - h < bottomY && onPage > 0) {
       pages.push([]);
       y = PH - o.top;
+      onPage = 0;
     }
+    onPage++;
     sysTop[si] = y;
     pageOf[si] = pages.length - 1;
     y -= h + 3.2 * sp;
