@@ -45,6 +45,11 @@ C D E F | G A B c :: d e f g |
 w: a b c d | e f g a
 w: one two
 [K:clef=alto] A B c d |]
+%%annotation page=2 type=circle x=10.257 y=-3 w=12.5 h=.5 color=#1F5fbf
+  %%annotation type=text x=1e2 y=+4.5px text="say \"hi\" \\ there" color=green
+<!-- %%annotation type=highlight x=5 y=6 w=7 h=8 -->
+%%annotation type=bogus page=0 color=nocolor x=abc text=plain
+%%annotationx=1
 
 X:3
 T:Third

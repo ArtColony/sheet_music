@@ -10,8 +10,9 @@ import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync, writeFileSy
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse } from '../src/index.js';
-import { psLiteral } from '../src/ps.js';
+import { parse, parseAnnotations } from '../src/index.js';
+import { splitTunes } from '../src/abc.js';
+import { psLiteral, num } from '../src/ps.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
@@ -71,6 +72,21 @@ test('loaded inside another dict, no X: line, empty text', { skip }, () => {
   const got = runPS(`10 dict begin ${LIB}\nend ${psLiteral(src)} sm-abc-parse-all () sm-abc-parse 2 array astore`);
   assert.deepEqual(got.scores, [expected(src).scores, expected('').scores[0]]);
   assert.deepEqual(got.warnings, []);
+});
+
+test('sm-abc-annotations gives what src/psdoc.js passes the layout', { skip }, () => {
+  // psdoc maps parseAnnotations of the tune's text to these fields and
+  // writes them with psLiteral, so non-integers arrive with two decimals
+  const lit = (v) => (typeof v === 'number' && !Number.isInteger(v) ? parseFloat(num(v)) : Array.isArray(v) ? v.map(lit) : v);
+  for (const file of ['samples/mountain-king.abc', 'tests/fixtures/parse-edge.abc']) {
+    const src = readFileSync(path.join(root, file), 'utf8');
+    const tunes = splitTunes(src);
+    const want = tunes.map((t) => parseAnnotations(t).map((a) => Object.fromEntries(['page', 'type', 'x', 'y', 'w', 'h', 'rgb', 'text'].map((k) => [k, lit(a[k])]))));
+    const call = `[ 0 1 ${tunes.length - 1} { ${psLiteral(src)} exch sm-abc-annotations } for ]`;
+    const got = runPS(call).scores;
+    assert.deepEqual(got, want, file);
+    assert.ok(want.flat().length >= 4, file);
+  }
 });
 
 test('CRLF line ends parse like LF', { skip }, () => {

@@ -1609,7 +1609,16 @@ end % sm-ae-dict
   % relative to the current directory, as in the one-liner above
   /sm-abc-parse where { pop } { mark { (lib/sm_abc_parse.ps) run } stopped pop cleartomark } ifelse
   /sm-abc-parse where { pop } { (sm-abc-engrave-string: sm-abc-parse is not defined; load lib/sm_abc_parse.ps) = } ifelse
-  exch sm-abc-parse                                   % options result
+  % lib/sm_abc_parse.ps also has sm-abc-parse-all (every tune, so /tune
+  % works) and sm-abc-annotations (the tune's %%annotation marks)
+  /sm-abc-parse-all where { pop /sm-abc-annotations where { pop true } { false } ifelse } { false } ifelse {
+    dup /annotations known not {                      % text options
+      1 index 1 index /tune known { 1 index /tune get } { 0 } ifelse sm-abc-annotations
+      dup length 0 gt { 1 index exch /annotations exch put } { pop } ifelse } if
+    exch sm-abc-parse-all                             % options [scores]
+    dup length 2 index /tune known { 2 index /tune get } { 0 } ifelse le {
+      (sm-abc-engrave-string: the text has no tune number /tune + 1) = } if
+  } { exch sm-abc-parse } ifelse                      % options result
   % the parser may give a Score, a list of Scores or << /scores [...] >>; a
   % result's /annotations (%%annotation lines) are drawn unless options has its own
   dup type /dicttype eq {

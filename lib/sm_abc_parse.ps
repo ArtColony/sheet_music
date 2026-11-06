@@ -17,6 +17,10 @@
 %                                       parseABC's warnings ("tune 1: ...")
 %   any sm-abc-json                  -  print a value as canonical JSON
 %                                       (dict keys sorted) on stdout
+%   (abc text) tune sm-abc-annotations -> [<< /page /type /x /y /w /h /rgb
+%                                       /text >> ...]  the %%annotation marks of
+%                                       tune (0-based), as lib/sm_abc.ps's
+%                                       options /annotations take them
 %
 % Score values: strings are PS strings (UTF-8 bytes), Fracs are [num den]
 % integer arrays reduced by gcd, JS null is null, booleans are booleans.
@@ -1092,17 +1096,118 @@ sm-abcp-dict begin
 } bind def
 
 % text sm-abcp-all [scores] [warnings]
-/sm-abcp-all {
+% text sm-abcp-tunelines [[lines of tune 1] ...]   (splitTunes)
+/sm-abcp-tunelines {
   sm-abcp-splitlines /sm-abcp-alines exch def
-  /sm-abcp-warns sm-abcp-lnew def
   /sm-abcp-atunes sm-abcp-lnew def /sm-abcp-acur null def
   sm-abcp-alines { /sm-abcp-al exch def
     sm-abcp-al (X:) sm-abcp-pre { /sm-abcp-acur sm-abcp-lnew def sm-abcp-atunes sm-abcp-acur sm-abcp-lpush } if
     sm-abcp-acur null ne { sm-abcp-acur sm-abcp-al sm-abcp-lpush } if } forall
   sm-abcp-atunes /n get 0 eq { [ sm-abcp-alines ] } { [ sm-abcp-atunes sm-abcp-larr { sm-abcp-larr } forall ] } ifelse
-  /sm-abcp-at2 exch def
+} bind def
+
+% text sm-abcp-all [scores] [warnings]
+/sm-abcp-all {
+  sm-abcp-tunelines /sm-abcp-at2 exch def
+  /sm-abcp-warns sm-abcp-lnew def
   [ 0 1 sm-abcp-at2 length 1 sub { sm-abcp-at2 1 index get exch sm-abcp-tune } for ]
   sm-abcp-warns sm-abcp-larr
+} bind def
+
+% ================================================================ reader's annotations
+% %%annotation lines (src/index.js parseAnnotations), in the form the layout
+% takes as options /annotations: << /page /type /x /y /w /h /rgb /text >>.
+% Numbers are rounded as psLiteral writes them (num(): two decimals).
+/sm-abcp-colors << /red (#c0392b) /blue (#1f5fbf) /green (#2e7d32) /orange (#d35400)
+  /purple (#7b3fa0) /yellow (#e0b000) /black (#222222) >> def
+% x sm-abcp-num2 x'  : an integer stays one, else two decimals
+/sm-abcp-num2 { dup dup round eq { cvi } { 100 mul round 100 div } ifelse } bind def
+/sm-abcp-hexval { dup 48 ge 1 index 57 le and { 48 sub } { 32 or dup 97 ge 1 index 102 le and { 87 sub } { pop -1 } ifelse } ifelse } bind def
+% color sm-abcp-rgb [r g b]
+/sm-abcp-rgb {
+  sm-abcp-colors 1 index known { sm-abcp-colors exch get } if
+  /sm-abcp-hx exch def
+  sm-abcp-hx length 7 eq { sm-abcp-hx 0 get 35 eq } { false } ifelse
+  dup { 1 1 6 { sm-abcp-hx exch get sm-abcp-hexval 0 lt { pop false } if } for } if
+  { [ 0 1 2 { dup 2 mul 1 add sm-abcp-hx exch get sm-abcp-hexval 16 mul exch 2 mul 2 add sm-abcp-hx exch get sm-abcp-hexval add
+      255 div 1000 mul round 1000 div sm-abcp-num2 } for ] }
+  { [0.75 0.22 0.17] } ifelse
+} bind def
+% s sm-abcp-float x true | false   (parseFloat of a prefix)
+/sm-abcp-float {
+  sm-abcp-ltrim /sm-abcp-ps exch def /sm-abcp-pp 0 def
+  sm-abcp-ps 0 sm-abcp-ch dup 43 eq exch 45 eq or { /sm-abcp-pp 1 def } if
+  /sm-abcp-pq sm-abcp-ps sm-abcp-pp sm-abcp-digits def /sm-abcp-pnd sm-abcp-pq sm-abcp-pp sub def
+  sm-abcp-ps sm-abcp-pq sm-abcp-ch 46 eq {
+    /sm-abcp-pr sm-abcp-ps sm-abcp-pq 1 add sm-abcp-digits def
+    /sm-abcp-pnd sm-abcp-pnd sm-abcp-pr sm-abcp-pq sub 1 sub add def /sm-abcp-pq sm-abcp-pr def } if
+  sm-abcp-pnd 0 gt {
+    sm-abcp-ps sm-abcp-pq sm-abcp-ch dup 101 eq exch 69 eq or {
+      /sm-abcp-pr sm-abcp-pq 1 add def
+      sm-abcp-ps sm-abcp-pr sm-abcp-ch dup 43 eq exch 45 eq or { /sm-abcp-pr sm-abcp-pr 1 add def } if
+      sm-abcp-ps sm-abcp-pr sm-abcp-digits dup sm-abcp-pr gt { /sm-abcp-pq exch def } { pop } ifelse } if
+    sm-abcp-ps 0 sm-abcp-pq sm-abcp-sub
+    dup (.) sm-abcp-pre { (0) exch sm-abcp-cat } if
+    dup (-.) sm-abcp-pre { 1 sm-abcp-tail (-0) exch sm-abcp-cat } if
+    dup (+) sm-abcp-pre { 1 sm-abcp-tail dup (.) sm-abcp-pre { (0) exch sm-abcp-cat } if } if
+    dup dup length 1 sub get 46 eq { (0) sm-abcp-cat } if
+    cvr true
+  } { false } ifelse
+} bind def
+% line sm-abcp-annot dict|null
+/sm-abcp-annot {
+  /sm-abcp-as exch def
+  /sm-abcp-ap sm-abcp-as 0 sm-abcp-spaces def
+  sm-abcp-as sm-abcp-ap sm-abcp-tail (<!--) sm-abcp-pre {
+    /sm-abcp-ap sm-abcp-as sm-abcp-ap 4 add sm-abcp-spaces def } if
+  sm-abcp-as sm-abcp-ap sm-abcp-tail (%%annotation) sm-abcp-pre
+  { sm-abcp-as sm-abcp-ap 12 add sm-abcp-ch dup 32 eq exch 9 eq or } { false } ifelse not { null } {
+    sm-abcp-as sm-abcp-ap 12 add sm-abcp-tail sm-abcp-trim
+    dup length 3 ge { dup dup length 3 sub 3 getinterval (-->) eq { 0 1 index length 3 sub getinterval sm-abcp-rtrim } if } if
+    /sm-abcp-ab exch def /sm-abcp-akv 8 dict def /sm-abcp-ap 0 def
+    { sm-abcp-ap sm-abcp-ab length ge { exit } if
+      /sm-abcp-aw sm-abcp-ap def
+      { sm-abcp-ab sm-abcp-aw sm-abcp-ch sm-abcp-isword { /sm-abcp-aw sm-abcp-aw 1 add def } { exit } ifelse } loop
+      /sm-abcp-ae2 -1 def
+      sm-abcp-aw sm-abcp-ap gt { sm-abcp-ab sm-abcp-aw sm-abcp-ch 61 eq } { false } ifelse {
+        /sm-abcp-ak sm-abcp-aw 1 add def
+        sm-abcp-ab sm-abcp-ak sm-abcp-ch 34 eq {
+          % "..." with backslash escapes
+          /sm-abcp-asb sm-abcp-sbnew def /sm-abcp-aq sm-abcp-ak 1 add def
+          { sm-abcp-ab sm-abcp-aq sm-abcp-ch
+            dup -1 eq { pop /sm-abcp-aq -1 def exit } if
+            dup 34 eq { pop exit } if
+            dup 92 eq { pop sm-abcp-ab sm-abcp-aq 1 add sm-abcp-ch dup -1 eq { pop /sm-abcp-aq -1 def exit } if
+              sm-abcp-asb exch sm-abcp-sbputc /sm-abcp-aq sm-abcp-aq 2 add def }
+            { sm-abcp-asb exch sm-abcp-sbputc /sm-abcp-aq sm-abcp-aq 1 add def } ifelse } loop
+          sm-abcp-aq 0 ge { /sm-abcp-av sm-abcp-asb sm-abcp-sbstr def /sm-abcp-ae2 sm-abcp-aq 1 add def } if
+        } if
+        sm-abcp-ae2 0 lt {
+          /sm-abcp-aq sm-abcp-ak def
+          { sm-abcp-ab sm-abcp-aq sm-abcp-ch dup -1 eq exch sm-abcp-isspc or { exit } if /sm-abcp-aq sm-abcp-aq 1 add def } loop
+          sm-abcp-aq sm-abcp-ak gt { /sm-abcp-av sm-abcp-ab sm-abcp-ak sm-abcp-aq sm-abcp-sub sm-abcp-copy def /sm-abcp-ae2 sm-abcp-aq def } if
+        } if
+        sm-abcp-ae2 0 ge { sm-abcp-akv sm-abcp-ab sm-abcp-ap sm-abcp-aw sm-abcp-sub sm-abcp-av put } if
+      } if
+      /sm-abcp-ap sm-abcp-ae2 0 ge { sm-abcp-ae2 } { sm-abcp-ap 1 add } ifelse def
+    } loop
+    /sm-abcp-anum { % key default -> number
+      exch sm-abcp-akv exch 2 copy known { get sm-abcp-float { exch pop } if } { pop pop } ifelse } def
+    /sm-abcp-atype sm-abcp-akv /type known { sm-abcp-akv /type get } { () } ifelse def
+    sm-abcp-atype (circle) ne sm-abcp-atype (highlight) ne and { /sm-abcp-atype (text) def } if
+    /sm-abcp-acol sm-abcp-akv /color known { sm-abcp-akv /color get } { () } ifelse def
+    sm-abcp-acol length 0 eq { /sm-abcp-acol sm-abcp-atype (highlight) eq { (yellow) } { (red) } ifelse def } if
+    << /page /page 1 sm-abcp-anum round cvi 1 max
+       /type sm-abcp-atype /x /x 0 sm-abcp-anum sm-abcp-num2 /y /y 0 sm-abcp-anum sm-abcp-num2
+       /w /w 40 sm-abcp-anum sm-abcp-num2 /h /h 20 sm-abcp-anum sm-abcp-num2
+       /rgb sm-abcp-acol sm-abcp-rgb
+       /text sm-abcp-akv /text known { sm-abcp-akv /text get } { () } ifelse >>
+  } ifelse
+} bind def
+% text tune sm-abcp-annots [annotations of that tune]
+/sm-abcp-annots {
+  exch sm-abcp-tunelines dup length 2 index gt { exch get } { pop pop [] } ifelse
+  [ exch { sm-abcp-annot dup null eq { pop } if } forall ]
 } bind def
 
 % path sm-abcp-readfile text
@@ -1160,5 +1265,6 @@ end % sm-abcp-dict
 /sm-abc-parse-file-all { sm-abcp-dict begin sm-abcp-readfile end sm-abc-parse-all } bind def
 /sm-abc-parse-file { sm-abc-parse-file-all 0 get } bind def
 /sm-abc-json { sm-abcp-dict begin sm-abcp-json end } bind def
+/sm-abc-annotations { sm-abcp-dict begin sm-abcp-annots end } bind def
 
 end % userdict

@@ -74,14 +74,17 @@ in PostScript), a short driver and the ABC source itself, verbatim after
 in the page. `-o song.pdf` / `.png` / `.svg` render it with the pscat CLI,
 `--engine ps-wasm` with the WebAssembly build (byte-identical PDFs; every drawn
 position is rounded to two decimals with `sm-r2`, and the layout uses no
-transcendental operators). Until `lib/sm_abc_parse.ps` exists the driver
-engraves the Score that the JS parser wrote into the file (`psLiteral`); once
-`sm-abc-parse` is defined it parses the embedded ABC instead.
+transcendental operators). The file also carries
+[`lib/sm_abc_parse.ps`](lib/sm_abc_parse.ps), so pscat parses the embedded
+ABC too (tune by `--tune`, `%%annotation` marks included); the Score the JS
+parser wrote (`psLiteral`) is embedded only as a fallback for a file without
+the parser. Both give the same pages.
 
 From PostScript, by hand: `score sm-abc-engrave`, or `score << /paper /a4
-/staff-space 6 /breaks (auto) >> sm-abc-engrave`; and, once the PostScript
-parser exists, `(lib/sm_engrave.ps) run (lib/sm_abc.ps) run (song.abc)
-sm-abc-engrave-file` (it loads `lib/sm_abc_parse.ps` itself). See the header
+/staff-space 6 /breaks (auto) >> sm-abc-engrave`; or straight from the
+ABC file, with no JavaScript at all, `(lib/sm_engrave.ps) run (lib/sm_abc.ps)
+run (song.abc) sm-abc-engrave-file` (it loads `lib/sm_abc_parse.ps` itself;
+`(song.abc) << /tune 1 >> sm-abc-engrave-file` for the second tune). See the header
 of `lib/sm_abc.ps`. `%%transpose` is ignored by this engine (with a warning).
 
 It covers everything the JS layout draws: title block, tempo, clefs, key and
