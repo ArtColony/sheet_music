@@ -1,0 +1,220 @@
+%!PS
+% sheet.ps -- the sheet_music PostScript library in one file to run.
+%
+% Part of ArtColony/sheet_music (MIT). Running this file loads, from the
+% directory it finds them in:
+%   sm_engrave.ps    the glyphs and drawing primitives (sm-staff, sm-clef-treble, ...)
+%   sm_abc_parse.ps  the ABC parser (sm-abc-parse, sm-abc-warnings, ...)
+%   sm_abc.ps        layout and engraving (sm-abc-engrave, sm-abc-engrave-file, ...)
+%   sm_transpose.ps  transposition (sm-score-transpose, the /transpose option), if present
+% and defines the agent-facing helpers below. Reference: docs/postscript-api.md.
+%
+% Finding the library. pscat cannot tell a program the path of the file it
+% is running, so this file looks for its siblings in, in order:
+%   1. sm-lib-dir, if defined before running this file (a string ending in /):
+%        /sm-lib-dir (/path/to/lib/) def (/path/to/lib/sheet.ps) run
+%   2. (lib/)          the repository root as the current directory, and
+%                      pscat's resource search for lib/ names: $PSCAT_LIB,
+%                      $PSCAT_HOME/lib, the per-user pscat data directory's lib/
+%   3. (.sheet-music/) a project-local copy (what the pscat MCP tools can read)
+%   4. ()              the current directory itself
+% The first that holds sm_engrave.ps wins and is stored as sm-lib-dir in
+% userdict, so anything loaded later comes from the same copy.
+%
+% Helpers (all print to stdout, lines start with "sm-abc: ")
+%   (song.abc) [options] sm-abc-engrave-file -     read, parse, engrave (sm_abc.ps)
+%   (abc text) [options] sm-abc-engrave-string -   the same for text in a string
+%   [options] sm-abc-engrave-here -        engrave the ABC that follows this line of
+%                                          the program, up to a line %%SM-ABC-END or EOF
+%   sm-abc-here (text)                     read that ABC text without engraving it
+%   (song.abc) sm-abc-list-file -          one line per tune: /tune index, X:, title, meter, key
+%   (abc text) sm-abc-list-string -
+%   (song.abc) sm-abc-check-file -         parse every tune, print the summary, the parse
+%   (abc text) sm-abc-check-string -       warnings and bars whose length disagrees
+%                                          with the meter; draws nothing
+%   sm-sheet-version (x.y.z)
+% Parse warnings are printed by the engrave procedures too (options /quiet true
+% silences them). Options are those of sm-abc-engrave (see lib/sm_abc.ps):
+% /paper /staff-space /breaks /footer /margin /top /bottom /annotations, /tune
+% (0-based: the first tune is /tune 0), and /transpose (semitones) when
+% sm_transpose.ps is loaded.
+%
+% One-liner (pscat needs --page to match the paper: 612x792 letter, 595x842 a4):
+%   pscat --pdf song.pdf --page 612x792 -e '(lib/sheet.ps) run (song.abc) sm-abc-engrave-file'
+%
+% Every name starts with sm-; this file's own temporaries live in
+% sm-sheet-dict and start with sm-sh-.
+
+userdict begin
+
+/sm-sheet-version (0.1.0) def
+/sm-sheet-dict 80 dict def
+sm-sheet-dict begin
+/sm-sh-cat { % a b -> ab
+  1 index length 1 index length add string
+  dup 0 4 index putinterval dup 3 index length 3 index putinterval
+  3 1 roll pop pop
+} bind def
+% (path) sm-sh-exists bool : can the file be opened for reading?
+% (status cannot tell: pscat#952, docs/FRICTION.md #10)
+/sm-sh-exists {
+  mark exch { (r) file closefile } stopped { cleartomark false } { cleartomark true } ifelse
+} bind def
+end
+
+% ---------------------------------------------------------------- loading
+/sm-sh-dir null def
+/sm-lib-dir where {
+  pop sm-lib-dir dup (sm_engrave.ps) sm-sheet-dict /sm-sh-cat get exec sm-sheet-dict /sm-sh-exists get exec
+  { /sm-sh-dir exch def } {
+    (sm-abc: error: sm-lib-dir is ) print dup print ( but ) print (sm_engrave.ps) print ( is not there) = pop
+  } ifelse
+} {
+  [ (lib/) (.sheet-music/) () ] {
+    dup (sm_engrave.ps) sm-sheet-dict /sm-sh-cat get exec sm-sheet-dict /sm-sh-exists get exec
+    { /sm-sh-dir exch def exit } { pop } ifelse
+  } forall
+} ifelse
+sm-sh-dir null eq {
+  (sm-abc: error: cannot find sm_engrave.ps; define /sm-lib-dir (/path/to/lib/) def before running sheet.ps) =
+  /sm-sh-dir () def   % running sm_engrave.ps below then fails with undefinedfilename
+} if
+/sm-lib-dir sm-sh-dir def
+sm-lib-dir (sm_engrave.ps) sm-sheet-dict /sm-sh-cat get exec run
+sm-lib-dir (sm_abc_parse.ps) sm-sheet-dict /sm-sh-cat get exec run
+sm-lib-dir (sm_abc.ps) sm-sheet-dict /sm-sh-cat get exec run
+% optional: run outside stopped, so an error inside it is reported as usual
+sm-lib-dir (sm_transpose.ps) sm-sheet-dict /sm-sh-cat get exec
+dup sm-sheet-dict /sm-sh-exists get exec { run } { pop } ifelse
+currentdict /sm-sh-dir undef
+
+% ---------------------------------------------------------------- helpers
+sm-sheet-dict begin
+/sm-sh-mark (%%SM-ABC-END) def
+/sm-sh-get { 2 copy known { get } { pop pop null } ifelse } bind def
+/sm-sh-cvs { 24 string cvs } bind def
+/sm-sh-gcd { abs exch abs exch { dup 0 eq { pop exit } if exch 1 index mod } loop dup 0 eq { pop 1 } if } bind def
+/sm-sh-fadd { % [a b] [c d] -> [a/b + c/d]
+  aload pop 3 -1 roll aload pop          % c d a b
+  /sm-sh-b exch def /sm-sh-a exch def /sm-sh-d exch def /sm-sh-c exch def
+  sm-sh-a sm-sh-d mul sm-sh-c sm-sh-b mul add sm-sh-b sm-sh-d mul
+  2 copy sm-sh-gcd dup 3 1 roll idiv 3 1 roll idiv exch 2 array astore
+} bind def
+/sm-sh-fcmp { aload pop 3 -1 roll aload pop 4 -1 roll mul 3 1 roll mul exch sub } bind def % a b -> sign(a-b)
+/sm-sh-fstr { aload pop exch sm-sh-cvs exch sm-sh-cvs (/) exch sm-sh-cat sm-sh-cat } bind def
+% the X: numbers of a text, in order
+/sm-sh-xnums {
+  /sm-sh-xt exch def
+  [ { sm-sh-xt (\n) search { exch pop exch /sm-sh-xt exch def } { /sm-sh-xt () def } ifelse
+      dup (X:) anchorsearch { pop
+        { dup length 0 eq { exit } if dup 0 get 32 eq { 1 1 index length 1 sub getinterval } { exit } ifelse } loop
+        dup length string copy exch pop } { pop pop } ifelse
+      sm-sh-xt length 0 eq { exit } if } loop ]
+} bind def
+/sm-sh-key { % fifths -> (K:2#)
+  dup 0 eq { pop (0) } { dup 0 gt { sm-sh-cvs (#) sm-sh-cat } { neg sm-sh-cvs (b) sm-sh-cat } ifelse } ifelse
+} bind def
+/sm-sh-time { % time dict -> (3/4), (none) for free meter
+  dup /den get 0 eq { pop (none) } {
+  dup /num get sm-sh-cvs (/) sm-sh-cat exch /den get sm-sh-cvs sm-sh-cat } ifelse
+} bind def
+% i score xnums ntunes sm-sh-line - : the one-line summary of a tune
+/sm-sh-line {
+  /sm-sh-n exch def /sm-sh-xs exch def /sm-sh-s exch def /sm-sh-i exch def
+  (sm-abc: /tune ) print sm-sh-i sm-sh-cvs print
+  sm-sh-xs length sm-sh-n eq { (  X:) print sm-sh-xs sm-sh-i get print } if
+  (  ") print sm-sh-s /meta get /title sm-sh-get dup null eq { pop () } if print (") print
+  (  M:) print sm-sh-s /initial get /time get sm-sh-time print
+  (  K:) print sm-sh-s /initial get /key get /fifths get sm-sh-key print
+  (  bars ) print sm-sh-s /measures get length sm-sh-cvs print
+  (  staves ) print sm-sh-s /staves get length sm-sh-cvs =
+} bind def
+% mi si sm-sh-mlen [n d] : the summed durations of staff si in measure mi
+/sm-sh-mlen {
+  exch sm-sh-ms exch get /staves get exch get /events get
+  [0 1] exch { /dur sm-sh-get dup null eq { pop } { sm-sh-fadd } ifelse } forall
+} bind def
+% mi sm-sh-pairs bool : is the short bar mi completed by a short neighbour
+% (a bar split around a section end: |: or || between its two halves)?
+/sm-sh-pairs {
+  /sm-sh-pi exch def false
+  [ sm-sh-pi 1 sub sm-sh-pi 1 add ] { /sm-sh-pj exch def
+    sm-sh-pj 0 ge sm-sh-pj sm-sh-ms length lt and {
+      sm-sh-pj sm-sh-si sm-sh-mlen sm-sh-len sm-sh-fadd sm-sh-want sm-sh-fcmp 0 eq or } if
+  } forall
+} bind def
+% score sm-sh-bars n : print the bars whose length disagrees with the meter.
+% Not reported: a pickup (bar number 0), multi-measure rests, free meter, and
+% short bars that are the last bar, end at a double or repeat bar line (they
+% complete a pickup), or make a whole bar with a short neighbour.
+/sm-sh-bars {
+  /sm-sh-bs exch def /sm-sh-bad 0 def
+  /sm-sh-tm sm-sh-bs /initial get /time get def
+  /sm-sh-ms sm-sh-bs /measures get def
+  0 1 sm-sh-ms length 1 sub { /sm-sh-mi exch def
+    /sm-sh-m sm-sh-ms sm-sh-mi get def
+    sm-sh-m /time sm-sh-get dup null ne { /sm-sh-tm exch def } { pop } ifelse
+    /sm-sh-want [ sm-sh-tm /num get sm-sh-tm /den get ] def
+    sm-sh-m /mmCount sm-sh-get dup null eq { pop 0 } if 0 gt
+    sm-sh-m /number get 0 eq or sm-sh-tm /den get 0 eq or not {
+      0 1 sm-sh-m /staves get length 1 sub { /sm-sh-si exch def
+        /sm-sh-len sm-sh-mi sm-sh-si sm-sh-mlen def
+        /sm-sh-c sm-sh-len sm-sh-want sm-sh-fcmp def
+        sm-sh-c 0 gt
+        sm-sh-c 0 lt {
+          sm-sh-mi sm-sh-ms length 1 sub eq
+          sm-sh-m /endBar sm-sh-get dup null eq { pop (single) } if (single) ne or
+          sm-sh-mi sm-sh-pairs or not
+        } { false } ifelse or {
+          /sm-sh-bad sm-sh-bad 1 add def
+          (sm-abc: bar ) print sm-sh-m /number get sm-sh-cvs print
+          sm-sh-bs /staves get length 1 gt { (, staff ) print sm-sh-si 1 add sm-sh-cvs print } if
+          (: ) print sm-sh-len sm-sh-fstr print ( of a whole note, M:) print sm-sh-tm sm-sh-time print
+          ( wants ) print sm-sh-want sm-sh-fstr =
+        } if
+      } for
+    } if
+  } for
+  sm-sh-bad
+} bind def
+/sm-sh-list { % text ->
+  dup sm-sh-xnums exch sm-abc-parse-all     % xnums [scores]
+  /sm-sh-ss exch def /sm-sh-xx exch def
+  (sm-abc: ) print sm-sh-ss length sm-sh-cvs print sm-sh-ss length 1 eq { ( tune) } { ( tunes) } ifelse =
+  0 1 sm-sh-ss length 1 sub { dup sm-sh-ss exch get sm-sh-xx sm-sh-ss length sm-sh-line } for
+} bind def
+/sm-sh-check { % text ->
+  sm-sh-list
+  /sm-sh-nw sm-abc-warnings length def
+  sm-abc-warnings { (sm-abc: warning: ) print = } forall
+  /sm-sh-nb 0 def
+  0 1 sm-sh-ss length 1 sub { /sm-sh-ti exch def
+    sm-sh-ss length 1 gt { (sm-abc: tune ) print sm-sh-ti 1 add sm-sh-cvs print (:) = } if
+    sm-sh-ss sm-sh-ti get sm-sh-bars /sm-sh-nb exch sm-sh-nb add def
+  } for
+  (sm-abc: check: ) print sm-sh-ss length sm-sh-cvs print ( tune\(s\), ) print
+  sm-sh-nw sm-sh-cvs print ( warning\(s\), ) print sm-sh-nb sm-sh-cvs print ( bar\(s\) off the meter) =
+  sm-sh-nw sm-sh-nb add 0 eq { (sm-abc: ok) = } if
+} bind def
+/sm-sh-readfile { % path -> text
+  (r) file dup null sm-abc-readsrc exch closefile
+} bind def
+end % sm-sheet-dict
+
+% ---------------------------------------------------------------- public
+% sm-abc-here (text): the lines after the current line of the running program,
+% up to a line %%SM-ABC-END (or the end of the file). The call must end its line.
+/sm-abc-here {
+  currentfile sm-sheet-dict /sm-sh-mark get sm-abc-readsrc
+} bind def
+% [options] sm-abc-engrave-here -
+/sm-abc-engrave-here {
+  count 0 gt { dup type /dicttype eq } { false } ifelse not { 0 dict } if
+  sm-abc-here exch sm-abc-engrave-string
+} bind def
+/sm-abc-list-string { sm-sheet-dict begin sm-sh-list end } bind def
+/sm-abc-list-file { sm-sheet-dict begin sm-sh-readfile sm-sh-list end } bind def
+/sm-abc-check-string { sm-sheet-dict begin sm-sh-check end } bind def
+/sm-abc-check-file { sm-sheet-dict begin sm-sh-readfile sm-sh-check end } bind def
+
+end % userdict

@@ -130,12 +130,14 @@ for checks.
 | list the tunes | `(tunes.abc) sm-abc-list-file 0 0 1 1 rectfill showpage` |
 | check | `(tune.abc) sm-abc-check-file 0 0 1 1 rectfill showpage` |
 | ABC in a string | `(X:1\nT:Scale\nK:C\nCDEF GABc|]) sm-abc-engrave-string`: short tests only, since `(` and `\` must be escaped in a string |
-| transpose | `<< /transpose 2 >>` (semitones; needs `sm_transpose.ps`) |
+| transpose | `<< /transpose 2 >>` (semitones), or a `%%transpose 2` line in the tune |
 
 Options: `/paper` (`/letter`, `/a4`, `[w h]` points), `/staff-space`
 (points, default 5.5), `/breaks` (`(source)` keeps your lines, `(auto)` fills
 them), `/tune` (0-based), `/footer (text)` (`()` for none), `/margin` `/top`
-`/bottom`, `/quiet true` (no warnings), `/transpose` (semitones).
+`/bottom`, `/quiet true` (no warnings), `/transpose` (semitones: B♭
+clarinet or trumpet `2`, E♭ alto sax `9`, F horn `7`, an octave down `-12`;
+respelled in the key with the fewest accidentals, chord symbols too).
 
 ## Writing ABC
 
@@ -201,8 +203,6 @@ library.
   (sheet_music#5).
 - One voice per staff (`&` is skipped with a warning); no macros (`m:`, `U:`);
   courtesy signatures and mid-line lyric wrapping are not drawn.
-- Transposition needs `sm_transpose.ps`; without it `/transpose` is ignored
-  with a warning.
 - PDFs have the text as outlines (not searchable); fonts are the 35 standard
   PostScript fonts.
 

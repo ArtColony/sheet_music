@@ -20,8 +20,11 @@
 %   (song.abc) sm-abc-engrave-file -       read, parse with sm-abc-parse, engrave
 %   (song.abc) options sm-abc-engrave-file -   (options also take /tune, 0-based)
 %   abc-string [options] sm-abc-engrave-string -
-%     These run lib/sm_abc_parse.ps (relative to the current directory) when
-%     sm-abc-parse is not defined yet. Parser contract: (abc) sm-abc-parse
+%     These run sm_abc_parse.ps from sm-lib-dir (default (lib/), relative to
+%     the current directory or pscat's lib/ search) when sm-abc-parse is not
+%     defined yet; lib/sheet.ps loads everything up front. The last parse's
+%     warnings are printed to stdout ("sm-abc: warning: ..."); /quiet true
+%     in options silences them. Parser contract: (abc) sm-abc-parse
 %     gives a Score, an array of Scores, or << /scores [...] /annotations [...] >>.
 %     options /transpose N (semitones) on any of these: the score is
 %     transposed first (lib/sm_transpose.ps sm-score-transpose, run on demand
@@ -1590,11 +1593,13 @@ end % sm-ae-dict
 % ---------------------------------------------------------------- public procedures
 /sm-abc-engrave { % score [options] ->
   dup type /dicttype eq { dup /measures known { 0 dict } if } { 0 dict } ifelse
-  % options /transpose N: sm-score-transpose (lib/sm_transpose.ps, run from
-  % the current directory when it is not loaded yet) moves the score first
+  % options /transpose N: sm-score-transpose (sm_transpose.ps, run from sm-lib-dir,
+  % default (lib/), when it is not loaded yet) moves the score first
   dup /transpose known { dup /transpose get dup null eq { pop 0 } if cvi } { 0 } ifelse
   dup 0 ne {
-    /sm-score-transpose where { pop } { mark { (lib/sm_transpose.ps) run } stopped pop cleartomark } ifelse
+    /sm-score-transpose where { pop } { mark {
+      /sm-lib-dir where { pop sm-lib-dir } { (lib/) } ifelse (sm_transpose.ps) sm-ae-dict /sm-ae-cat get exec run
+    } stopped pop cleartomark } ifelse
     /sm-score-transpose where { pop } { (sm-abc-engrave: sm-score-transpose is not defined; load lib/sm_transpose.ps) = } ifelse
     2 index exch sm-score-transpose pop
   } { pop } ifelse
@@ -1616,13 +1621,23 @@ end % sm-ae-dict
   pop sm-ae-rd-out
   end
 } bind def
+% options sm-abc-print-warnings - : print the last parse's sm-abc-warnings to
+% stdout, one "sm-abc: warning: ..." line each, unless options has /quiet true
+/sm-abc-print-warnings {
+  dup /quiet known { dup /quiet get true eq } { false } ifelse { pop } {
+    /sm-abc-warnings where { pop sm-abc-warnings { (sm-abc: warning: ) print = } forall } if
+    pop
+  } ifelse
+} bind def
 % abc-text [options] -> : parse with lib/sm_abc_parse.ps and engrave
 /sm-abc-engrave-string {
   % a copy of the options, so the caller's dict is left as it was
   dup type /dicttype eq { dup length 2 add dict copy } { 0 dict } ifelse
-  % the parser: already loaded (a self-contained file), else lib/sm_abc_parse.ps
-  % relative to the current directory, as in the one-liner above
-  /sm-abc-parse where { pop } { mark { (lib/sm_abc_parse.ps) run } stopped pop cleartomark } ifelse
+  % the parser: already loaded (a self-contained file, lib/sheet.ps), else
+  % sm_abc_parse.ps from sm-lib-dir when defined, else (lib/) as in the one-liner above
+  /sm-abc-parse where { pop } { mark {
+    /sm-lib-dir where { pop sm-lib-dir } { (lib/) } ifelse (sm_abc_parse.ps) sm-ae-dict /sm-ae-cat get exec run
+  } stopped pop cleartomark } ifelse
   /sm-abc-parse where { pop } { (sm-abc-engrave-string: sm-abc-parse is not defined; load lib/sm_abc_parse.ps) = } ifelse
   % %%transpose in the tune (else the file header) adds to options /transpose
   /sm-abc-tune-transpose where {
@@ -1638,8 +1653,10 @@ end % sm-ae-dict
       dup length 0 gt { 1 index exch /annotations exch put } { pop } ifelse } if
     exch sm-abc-parse-all                             % options [scores]
     dup length 2 index /tune known { 2 index /tune get } { 0 } ifelse le {
-      (sm-abc-engrave-string: the text has no tune number /tune + 1) = } if
+      (sm-abc: error: no tune /tune ) print 1 index /tune get 20 string cvs print
+      ( \(0-based\); the text has ) print dup length 20 string cvs print ( tune\(s\)) = } if
   } { exch sm-abc-parse } ifelse                      % options result
+  1 index sm-abc-print-warnings
   % the parser may give a Score, a list of Scores or << /scores [...] >>; a
   % result's /annotations (%%annotation lines) are drawn unless options has its own
   dup type /dicttype eq {

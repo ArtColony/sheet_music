@@ -59,6 +59,10 @@ test('one-liners from another directory: /sm-lib-dir, PSCAT_LIB, a .sheet-music 
   // 1. sm-lib-dir set by the caller, absolute paths
   let r = pscat(`/sm-lib-dir ${lit(LIB)} def ${lit(LIB + 'sheet.ps')} run ${lit(song)} sm-abc-engrave-file\n`, { cwd: other });
   assert.equal(pages(r.pdf), 1);
+  // ... with sm_transpose.ps loaded from there too: twinkle in D
+  r = pscat(`/sm-lib-dir ${lit(LIB)} def ${lit(LIB + 'sheet.ps')} run ${lit(song)} sm-abc-parse-file 2 sm-score-transpose /transposed get /key get = ${lit(song)} << /transpose 2 >> sm-abc-engrave-file\n`, { cwd: other });
+  assert.equal(r.out, 'D\n');
+  assert.equal(pages(r.pdf), 1);
   // 2. PSCAT_LIB: (lib/sheet.ps) resolves through pscat's lib/ search, and
   //    pscat's own bundled libraries still do
   r = pscat(`(lib/sheet.ps) run (lib/artkit.ps) run ${lit(song)} sm-abc-list-file${DOT}`, { cwd: other, env: { PSCAT_LIB: path.join(root, 'lib') } });

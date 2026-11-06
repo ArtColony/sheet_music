@@ -126,6 +126,14 @@ ABC too (tune by `--tune`, `%%annotation` marks included); the Score the JS
 parser wrote (`psLiteral`) is embedded only as a fallback for a file without
 the parser. Both give the same pages.
 
+**With pscat alone** (no Node): `pscat --pdf song.pdf --page 612x792 -e
+'(lib/sheet.ps) run (song.abc) sm-abc-engrave-file'`. [`lib/sheet.ps`](lib/sheet.ps)
+loads the whole library; `(song.abc) sm-abc-check-file` prints parse
+warnings and bars that do not add up, and the ABC can sit in the same `.ps`
+file after `sm-abc-engrave-here`. Every procedure, glyphs included, is in
+[`docs/postscript-api.md`](docs/postscript-api.md); the `ps-sheet-music` skill
+drives it with the pscat CLI or MCP tools.
+
 From PostScript, by hand: `score sm-abc-engrave`, or `score << /paper /a4
 /staff-space 6 /breaks (auto) >> sm-abc-engrave`; or straight from the
 ABC file, with no JavaScript at all, `(lib/sm_engrave.ps) run (lib/sm_abc.ps)
