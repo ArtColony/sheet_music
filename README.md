@@ -24,6 +24,10 @@ ABC / MusicXML ──parse──▶ score model ──layout──▶ PostScript
 - **No music font.** Clefs, noteheads, rests, accidentals, flags, ties and the brace
   are PostScript paths in [`lib/sm_engrave.ps`](lib/sm_engrave.ps). Text uses
   only the PostScript standard 35 fonts that every pscat build has.
+- **ABC parser in PostScript too.** [`lib/sm_abc_parse.ps`](lib/sm_abc_parse.ps)
+  (`(abc text) sm-abc-parse`, `(file.abc) sm-abc-parse-file`) builds inside
+  pscat the same Score the JS parser builds; `tests/ps-parse.test.mjs` checks
+  every ABC sample against `src/abc.js`.
 - **No dependencies.** Plain ES modules, Node 22+, and the pinned pscat release.
 
 ## Quick start

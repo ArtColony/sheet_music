@@ -1,0 +1,53 @@
+% file header comment
+%%pagewidth 21cm
+
+X:1
+T:Caf\'e \"uber &amp; \ss tra\c cade \o
+T:second
+C:One
+C:Two
+A:Area
+R:reel
+B:Book
+H:hist
+N:note one
+W:words line
+M:(3+2)/8
+L:1/8
+Q:"Lento" "molto" 3/8=60
+K:Bb dorian clef=bass transpose=2
+V:A name="Upper  Voice" clef=treble
+V:B nm="Lower" bass
+V:A
+|: (3:2:3ABc (3DEF (6ABCDEF | z4 x Z2 | X | {/AB}c {g}d +trill+e !p!f !<(!g !<)!a !D.C.!b "^up""_down""<l"">r""@at"c |
+w: Hel-lo -- world\-ish * fine_ _ | next ba~by
+[1 A>B C<<D E>>F :|2 [CEG]2- [CEG] c-c | [|A2 || B2 :: c2 |] \
+d e f |
+V:B
+[V:A] C, D, E, & F |
+K:G mix
+G A B c | %comment
+T:body sub
+N:body note
+M:C|
+L:1/16
+P:Part A
+Q:1/4=120
+B c d e ~f .g Hh |
+V:C clef=wrong
+abc def |
+
+X:2
+T:Second tune
+M:none
+K:none
+C D E F | G A B c :: d e f g |
+w: a b c d | e f g a
+w: one two
+[K:clef=alto] A B c d |]
+
+X:3
+T:Third
+M:6/8
+K:Em
+(3ABc d e f | g3- g3 | a5 b | c'7 |
