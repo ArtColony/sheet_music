@@ -15,6 +15,7 @@
 %       /footer       credit line on the last page (default: from S:, Z: and the rights)
 %       /margin /top /bottom   page margins in points (50, 46, 44)
 %       /annotations  reader's marks, see below
+%       /transpose    semitones (default 0), see below
 %     Draws every page and ends each with showpage.
 %   (song.abc) sm-abc-engrave-file -       read, parse with sm-abc-parse, engrave
 %   (song.abc) options sm-abc-engrave-file -   (options also take /tune, 0-based)
@@ -22,6 +23,11 @@
 %     These run lib/sm_abc_parse.ps (relative to the current directory) when
 %     sm-abc-parse is not defined yet. Parser contract: (abc) sm-abc-parse
 %     gives a Score, an array of Scores, or << /scores [...] /annotations [...] >>.
+%     options /transpose N (semitones) on any of these: the score is
+%     transposed first (lib/sm_transpose.ps sm-score-transpose, run on demand
+%     like the parser; sm-abc-engrave modifies the score dict it is given).
+%     For ABC text the tune's %%transpose line, else the file header's, adds
+%     to it, as in the JS toPostScript.
 %   file (marker) sm-abc-readsrc string    read lines of file up to a line equal to marker
 %   x sm-r2 x'                             round to 2 decimals (all drawn positions go through it)
 %
@@ -1584,6 +1590,14 @@ end % sm-ae-dict
 % ---------------------------------------------------------------- public procedures
 /sm-abc-engrave { % score [options] ->
   dup type /dicttype eq { dup /measures known { 0 dict } if } { 0 dict } ifelse
+  % options /transpose N: sm-score-transpose (lib/sm_transpose.ps, run from
+  % the current directory when it is not loaded yet) moves the score first
+  dup /transpose known { dup /transpose get dup null eq { pop 0 } if cvi } { 0 } ifelse
+  dup 0 ne {
+    /sm-score-transpose where { pop } { mark { (lib/sm_transpose.ps) run } stopped pop cleartomark } ifelse
+    /sm-score-transpose where { pop } { (sm-abc-engrave: sm-score-transpose is not defined; load lib/sm_transpose.ps) = } ifelse
+    2 index exch sm-score-transpose pop
+  } { pop } ifelse
   sm-ae-dict begin sm-ae-run end
 } bind def
 % file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF)
@@ -1604,11 +1618,18 @@ end % sm-ae-dict
 } bind def
 % abc-text [options] -> : parse with lib/sm_abc_parse.ps and engrave
 /sm-abc-engrave-string {
-  dup type /dicttype eq { } { 0 dict } ifelse
+  % a copy of the options, so the caller's dict is left as it was
+  dup type /dicttype eq { dup length 2 add dict copy } { 0 dict } ifelse
   % the parser: already loaded (a self-contained file), else lib/sm_abc_parse.ps
   % relative to the current directory, as in the one-liner above
   /sm-abc-parse where { pop } { mark { (lib/sm_abc_parse.ps) run } stopped pop cleartomark } ifelse
   /sm-abc-parse where { pop } { (sm-abc-engrave-string: sm-abc-parse is not defined; load lib/sm_abc_parse.ps) = } ifelse
+  % %%transpose in the tune (else the file header) adds to options /transpose
+  /sm-abc-tune-transpose where {
+    pop 1 index 1 index /tune known { 1 index /tune get } { 0 } ifelse sm-abc-tune-transpose
+    1 index /transpose known { 1 index /transpose get dup null eq { pop 0 } if cvi add } if
+    1 index exch /transpose exch put
+  } if
   % lib/sm_abc_parse.ps also has sm-abc-parse-all (every tune, so /tune
   % works) and sm-abc-annotations (the tune's %%annotation marks)
   /sm-abc-parse-all where { pop /sm-abc-annotations where { pop true } { false } ifelse } { false } ifelse {
