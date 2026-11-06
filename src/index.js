@@ -9,7 +9,7 @@
 import { parseABC, splitTunes } from './abc.js';
 import { parseMusicXML } from './musicxml.js';
 import { engrave, PAPERS } from './layout.js';
-import { text as pstext, nums } from './ps.js';
+import { text as pstext, nums, psLiteral } from './ps.js';
 import { transposeScore, sourceTranspose, transposeChord, fifthsShift } from './transpose.js';
 import { embedSource, extractSource, isPDF } from './pdfmeta.js';
 import { performance as perform, midiFile, wholeSeconds, playOrder } from './play.js';
@@ -157,7 +157,7 @@ function defaultFooter(score) {
   return parts.join('  ·  ').replace(/·/g, '·');
 }
 
-export { pstext };
+export { pstext, psLiteral };
 
 // ------------------------------------------------------------ annotations
 // A source line   %%annotation page=1 type=text x=120 y=540 color=red text="Breathe"

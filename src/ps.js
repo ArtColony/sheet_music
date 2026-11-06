@@ -83,3 +83,30 @@ export function approxWidth(s, size, bold = false) {
   }
   return w * size * (bold ? 1.06 : 1);
 }
+
+/**
+ * Any JSON-like value as a PostScript literal: objects -> << /key value >>
+ * (keys sorted), arrays -> [ ], strings -> (escaped, non-ASCII as \ooo of
+ * its UTF-8 bytes), integers as integers, other numbers via num(), null ->
+ * null, booleans -> true/false; undefined members are left out. This is
+ * the contract between the JS parser and the PostScript engraver
+ * (lib/sm_abc.ps): a parsed Score written this way is what the PS layout
+ * consumes, and what the PS ABC parser must build. Fracs stay [num den].
+ */
+export function psLiteral(v) {
+  if (v === null) return 'null';
+  if (v === true || v === false) return String(v);
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : num(v);
+  if (typeof v === 'string') {
+    let s = '(';
+    for (const b of new TextEncoder().encode(v)) {
+      if (b === 40 || b === 41 || b === 92) s += '\\' + String.fromCharCode(b);
+      else if (b >= 32 && b < 127) s += String.fromCharCode(b);
+      else s += '\\' + b.toString(8).padStart(3, '0');
+    }
+    return s + ')';
+  }
+  if (Array.isArray(v)) return '[' + v.map(psLiteral).join(' ') + ']';
+  const keys = Object.keys(v).filter((k) => v[k] !== undefined).sort();
+  return '<<' + keys.map((k) => ` /${k} ${psLiteral(v[k])}`).join('') + ' >>';
+}
