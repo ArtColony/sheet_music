@@ -1,0 +1,1325 @@
+%!PS
+% sm_abc.ps -- lay out and engrave a Score dictionary in PostScript.
+%
+% Part of ArtColony/sheet_music (MIT). Needs lib/sm_engrave.ps (the glyphs).
+% The Score is the structure src/ps.js psLiteral() writes for the JS
+% parser's Score (keys sorted, Fracs as [num den]); lib/sm_abc_parse.ps, when
+% present, builds the same structure from ABC text inside PostScript.
+%
+% API
+%   score sm-abc-engrave -                 default options
+%   score options sm-abc-engrave -         options: a dict, every key optional
+%       /paper        /letter (default), /a4, or [width height] in points
+%       /staff-space  staff space in points (default 5.5)
+%       /breaks       (source) keep the input's line ends (default), (auto) fill lines
+%       /footer       credit line on the last page (default: from S:, Z: and the rights)
+%       /margin /top /bottom   page margins in points (50, 46, 44)
+%     Draws every page and ends each with showpage.
+%   (song.abc) sm-abc-engrave-file -       read, parse (needs sm-abc-parse), engrave
+%   (song.abc) options sm-abc-engrave-file -
+%   abc-string [options] sm-abc-engrave-string -
+%   file (marker) sm-abc-readsrc string    read lines of file up to a line equal to marker
+%   x sm-r2 x'                             round to 2 decimals (all drawn positions go through it)
+%
+% One-liners:
+%   (lib/sm_engrave.ps) run (lib/sm_abc_parse.ps) run (lib/sm_abc.ps) run
+%   (song.abc) sm-abc-engrave-file
+% and render with `pscat --pdf song.pdf --page 612x792 that.ps`.
+%
+% Units as in src/layout.js: sp = staff space (points); a vertical "pos" is
+% staff steps from the centre line, y = centre + pos * sp / 2.
+% Every name starts with sm-; the layout's own names live in sm-ae-dict and
+% start with sm-ae-. Per-event layout results are stored in the event dicts
+% under sm- keys (the Score dicts are never begun: their keys include /type).
+%
+% Covered: title block, tempo, clef/key/time (also mid-line changes),
+% proportional spacing with lyric/chord collision checks, source or automatic
+% line breaks and justification, page breaks, stems, flags, beams (the
+% Score's grouping), chords and seconds, accidentals, ledger lines, dots,
+% rests, multi-measure rests, bar lines, repeats, voltas, part labels, chord
+% symbols, lyrics with hyphens and extenders, ties, words after the tune,
+% page numbers and footer, several staves with brace/bracket.
+% Not yet: slurs, tuplets, grace notes, decorations, dynamics, hairpins,
+% annotations (see README).
+
+/sm-r2 { 100 mul round 100 div 0 add } bind def
+
+/sm-ae-dict 900 dict def
+sm-ae-dict begin
+
+% ---------------------------------------------------------------- helpers
+/sm-ae-get { 2 copy known { get } { pop pop null } ifelse } bind def   % d k -> v|null
+/sm-ae-is { sm-ae-get true eq } bind def                                % d k -> bool
+/sm-ae-max { 2 copy lt { exch } if pop } bind def
+/sm-ae-min { 2 copy gt { exch } if pop } bind def
+% n sm-ae-rn : round the top n numbers to 2 decimals
+/sm-ae-rn { dup { dup 1 add -1 roll sm-r2 exch } repeat pop } bind def
+/sm-ae-gcd { abs exch abs exch { dup 0 eq { pop exit } if exch 1 index mod } loop } bind def
+/sm-ae-fadd {
+  aload pop /sm-ae-fa-d exch def /sm-ae-fa-c exch def aload pop /sm-ae-fa-b exch def /sm-ae-fa-a exch def
+  sm-ae-fa-a sm-ae-fa-d mul sm-ae-fa-c sm-ae-fa-b mul add sm-ae-fa-b sm-ae-fa-d mul
+  2 copy sm-ae-gcd dup 0 eq { pop 1 } if
+  dup 3 1 roll idiv 3 1 roll idiv exch 2 array astore
+} bind def
+/sm-ae-fneg { aload pop exch neg exch 2 array astore } bind def
+/sm-ae-fsub { sm-ae-fneg sm-ae-fadd } bind def
+/sm-ae-fcmp { % a b -> int, sign of a - b
+  aload pop /sm-ae-fc-d exch def /sm-ae-fc-c exch def
+  aload pop exch sm-ae-fc-d mul exch sm-ae-fc-c mul sub
+} bind def
+/sm-ae-fval { aload pop div } bind def
+% log2 from + - * / only (identical in every pscat build)
+/sm-ae-log2 {
+  /sm-ae-lg-k 0 def
+  { dup 2 ge { 2 div /sm-ae-lg-k sm-ae-lg-k 1 add def } { exit } ifelse } loop
+  { dup 1 lt { 2 mul /sm-ae-lg-k sm-ae-lg-k 1 sub def } { exit } ifelse } loop
+  dup 1 sub exch 1 add div /sm-ae-lg-z exch def
+  /sm-ae-lg-z2 sm-ae-lg-z dup mul def
+  /sm-ae-lg-p sm-ae-lg-z def
+  0 1 2 41 { sm-ae-lg-p exch div add /sm-ae-lg-p sm-ae-lg-p sm-ae-lg-z2 mul def } for
+  2 mul 0.6931471805599453 div sm-ae-lg-k add
+} bind def
+/sm-ae-beams { aload pop exch div sm-ae-log2 round cvi 2 sub 0 sm-ae-max } bind def  % type -> n
+/sm-ae-spacefor { sm-ae-fval 16 mul 1 add sm-ae-log2 1.45 mul 1 add } bind def
+/sm-ae-isnote { /kind get (note) eq } bind def
+/sm-ae-append { [ 3 1 roll exch aload pop counttomark -1 roll ] } bind def   % arr x -> arr'
+/sm-ae-cat { % s1 s2 -> s
+  /sm-ae-ct-b exch def /sm-ae-ct-a exch def
+  sm-ae-ct-a length sm-ae-ct-b length add string
+  dup 0 sm-ae-ct-a putinterval dup sm-ae-ct-a length sm-ae-ct-b putinterval
+} bind def
+/sm-ae-cvs { 20 string cvs } bind def
+% stable insertion sort of an array by a numeric key: arr {key} -> arr
+/sm-ae-isort {
+  /sm-ae-is-k exch def /sm-ae-is-a exch def
+  1 1 sm-ae-is-a length 1 sub { /sm-ae-is-i exch def
+    /sm-ae-is-v sm-ae-is-a sm-ae-is-i get def
+    /sm-ae-is-kv sm-ae-is-v sm-ae-is-k def
+    /sm-ae-is-j sm-ae-is-i 1 sub def
+    { sm-ae-is-j 0 lt { exit } if
+      sm-ae-is-a sm-ae-is-j get sm-ae-is-k sm-ae-is-kv le { exit } if
+      sm-ae-is-a sm-ae-is-j 1 add sm-ae-is-a sm-ae-is-j get put
+      /sm-ae-is-j sm-ae-is-j 1 sub def } loop
+    sm-ae-is-a sm-ae-is-j 1 add sm-ae-is-v put
+  } for
+  sm-ae-is-a
+} bind def
+
+% ---------------------------------------------------------------- text
+% Rough advance widths (em fractions) as src/ps.js approxWidth.
+/sm-ae-aw-tab 128 array def
+0 1 127 { sm-ae-aw-tab exch 0.47 put } for
+65 1 90 { sm-ae-aw-tab exch 0.68 put } for
+48 1 57 { sm-ae-aw-tab exch 0.5 put } for
+(mwMW@%) { sm-ae-aw-tab exch 0.85 put } forall
+(iljtfr.,;:'!|()[] -`) { sm-ae-aw-tab exch 0.3 put } forall
+/sm-ae-aw { % (s) size bold -> width
+  /sm-ae-aw-b exch def /sm-ae-aw-sz exch def
+  0 exch { dup 128 ge { 16#C0 and 16#80 eq { 0 } { 0.47 } ifelse } { sm-ae-aw-tab exch get } ifelse add } forall
+  sm-ae-aw-sz mul sm-ae-aw-b { 1.06 mul } if
+} bind def
+% UTF-8 -> sm-show text (as src/ps.js text): codepoint -> (direct) or [(base) accent capital?]
+/sm-ae-u 160 dict def
+[ 16#C6 (\341) 16#E6 (\361) 16#D8 (\351) 16#F8 (\371) 16#DF (\373) 16#152 (\352) 16#153 (\372)
+  16#141 (\350) 16#142 (\370) 16#131 (\365) 16#2013 (\261) 16#2014 (\320) 16#2018 (\140) 16#2019 (\047)
+  16#201C (\252) 16#201D (\272) 16#201E (\271) 16#201A (\270) 16#2026 (\274) 16#2022 (\267) 16#A1 (\241)
+  16#BF (\277) 16#A3 (\243) 16#A5 (\245) 16#A7 (\247) 16#AB (\253) 16#BB (\273) 16#2039 (\254) 16#203A (\255)
+  16#2020 (\262) 16#2021 (\263) 16#B7 (\264) 16#B6 (\266) 16#FB01 (\256) 16#FB02 (\257) 16#A2 (\242)
+  16#266F (#) 16#266D (b) 16#266E () 16#A9 (\(c\)) 16#B0 (o) 16#D7 (x) 16#A0 ( )
+] aload length 2 idiv { sm-ae-u 3 1 roll put } repeat
+% accented Latin-1 letters: codepoint base accent-code
+/sm-ae-uacc [
+  16#C0 (A) 8#301 16#C1 (A) 8#302 16#C2 (A) 8#303 16#C3 (A) 8#304 16#C4 (A) 8#310 16#C5 (A) 8#312
+  16#C7 (C) 8#313 16#C8 (E) 8#301 16#C9 (E) 8#302 16#CA (E) 8#303 16#CB (E) 8#310
+  16#CC (I) 8#301 16#CD (I) 8#302 16#CE (I) 8#303 16#CF (I) 8#310 16#D1 (N) 8#304
+  16#D2 (O) 8#301 16#D3 (O) 8#302 16#D4 (O) 8#303 16#D5 (O) 8#304 16#D6 (O) 8#310
+  16#D9 (U) 8#301 16#DA (U) 8#302 16#DB (U) 8#303 16#DC (U) 8#310 16#DD (Y) 8#302
+  16#E0 (a) 8#301 16#E1 (a) 8#302 16#E2 (a) 8#303 16#E3 (a) 8#304 16#E4 (a) 8#310 16#E5 (a) 8#312
+  16#E7 (c) 8#313 16#E8 (e) 8#301 16#E9 (e) 8#302 16#EA (e) 8#303 16#EB (e) 8#310
+  16#EC (\365) 8#301 16#ED (\365) 8#302 16#EE (\365) 8#303 16#EF (\365) 8#310 16#F1 (n) 8#304
+  16#F2 (o) 8#301 16#F3 (o) 8#302 16#F4 (o) 8#303 16#F5 (o) 8#304 16#F6 (o) 8#310
+  16#F9 (u) 8#301 16#FA (u) 8#302 16#FB (u) 8#303 16#FC (u) 8#310 16#FD (y) 8#302 16#FF (y) 8#310
+] def
+0 3 sm-ae-uacc length 1 sub { /sm-ae-k exch def
+  sm-ae-u sm-ae-uacc sm-ae-k get
+  [ sm-ae-uacc sm-ae-k 1 add get 1 string dup 0 sm-ae-uacc sm-ae-k 2 add get put
+    % raised over a capital (not for the cedilla, which sits below)
+    sm-ae-uacc sm-ae-k 1 add get 0 get dup 65 ge exch 90 le and sm-ae-uacc sm-ae-k 2 add get 8#313 ne and ]
+  put } for
+/sm-ae-tx-add { sm-ae-tx-run sm-ae-tx-rn 3 -1 roll put /sm-ae-tx-rn sm-ae-tx-rn 1 add def } bind def
+/sm-ae-tx-flush { sm-ae-tx-rn 0 gt { sm-ae-tx-run 0 sm-ae-tx-rn getinterval dup length string copy /sm-ae-tx-rn 0 def } if } bind def
+/sm-ae-tx-byte { sm-ae-tx-s sm-ae-tx-i get /sm-ae-tx-i sm-ae-tx-i 1 add def } bind def
+/sm-ae-tx-cont { % cp -> cp' (one continuation byte)
+  sm-ae-tx-i sm-ae-tx-n lt { 64 mul sm-ae-tx-byte 63 and add } if } bind def
+/sm-ae-txt { % (utf8) size -> text for sm-show
+  /sm-ae-tx-sz exch def /sm-ae-tx-s exch def
+  true sm-ae-tx-s { 128 ge { pop false exit } if } forall
+  { sm-ae-tx-s } {
+    /sm-ae-tx-n sm-ae-tx-s length def /sm-ae-tx-i 0 def
+    /sm-ae-tx-run sm-ae-tx-n 3 mul string def /sm-ae-tx-rn 0 def
+    mark
+    { sm-ae-tx-i sm-ae-tx-n ge { exit } if
+      sm-ae-tx-byte
+      dup 128 lt { } {
+        dup 16#E0 lt { 31 and sm-ae-tx-cont } {
+          dup 16#F0 lt { 15 and sm-ae-tx-cont sm-ae-tx-cont } { 7 and sm-ae-tx-cont sm-ae-tx-cont sm-ae-tx-cont } ifelse
+        } ifelse
+      } ifelse
+      dup 128 lt { sm-ae-tx-add } {
+        sm-ae-u 1 index known {
+          sm-ae-u exch get dup type /stringtype eq { { sm-ae-tx-add } forall } {
+            /sm-ae-tx-ent exch def sm-ae-tx-flush sm-ae-tx-ent aload pop % base acc cap
+            { sm-ae-tx-sz 22 mul round 100 div } { 0 } ifelse 3 array astore
+          } ifelse
+        } { pop 63 sm-ae-tx-add } ifelse
+      } ifelse
+    } loop
+    sm-ae-tx-flush
+    counttomark array astore exch pop
+    dup length 0 eq { pop () } { dup length 1 eq { dup 0 get type /stringtype eq { 0 get } if } if } ifelse
+  } ifelse
+} bind def
+
+% ---------------------------------------------------------------- music constants
+/sm-ae-steps << /C 0 /D 1 /E 2 /F 3 /G 4 /A 5 /B 6 >> def
+/sm-ae-HW 0.615 def /sm-ae-HWW 0.82 def /sm-ae-STEMW 0.12 def
+/sm-ae-accw << /sharp 1.15 /flat 0.95 /natural 0.75 /dsharp 0.95 /dflat 1.75 >> def
+/sm-ae-accproc << /sharp /sm-acc-sharp /flat /sm-acc-flat /natural /sm-acc-natural /dsharp /sm-acc-dsharp /dflat /sm-acc-dflat >> def
+/sm-ae-ksharps [4 1 5 2 -1 3 0] def
+/sm-ae-kflats [0 3 -1 2 -2 1 -3] def
+/sm-ae-resthw << /measure 0.62 /whole 0.62 /half 0.62 /quarter 0.5 1 0.55 2 0.65 3 0.75 >> def
+/sm-ae-barw << /single 0.08 /double 0.7 /final 1.0 /thick-thin 0.9 /repeat-end 1.9 >> def
+/sm-ae-LYR 10.5 def /sm-ae-CHS 11 def
+/sm-ae-papers << /letter [612 792] /a4 [595.28 841.89] >> def
+
+/sm-ae-clefmid { % clef -> mid
+  dup /sign get dup (G) eq { pop 32 } { (F) eq { 24 } { 28 } ifelse } ifelse
+  1 index /line get 3 exch sub 2 mul add
+  exch /octave sm-ae-get dup null eq { pop 0 } if 7 mul add
+} bind def
+/sm-ae-posof { % note mid -> pos
+  exch dup /oct get 7 mul exch /step get cvn sm-ae-steps exch get add exch sub
+} bind def
+/sm-ae-keyoff { sm-ae-clefmid 34 exch sub dup 7 div round 7 mul sub cvi } bind def
+/sm-ae-clefdiff { % a b -> bool
+  2 copy /sign get exch /sign get ne 3 1 roll
+  2 copy /line get exch /line get ne 3 1 roll
+  /octave sm-ae-get dup null eq { pop 0 } if exch /octave sm-ae-get dup null eq { pop 0 } if ne or or
+} bind def
+/sm-ae-timediff { % a b -> bool
+  2 copy /num get exch /num get ne 3 1 roll
+  2 copy /den get exch /den get ne 3 1 roll
+  /symbol sm-ae-get exch /symbol sm-ae-get ne or or
+} bind def
+/sm-ae-timew { % time -> width (sp)
+  dup null eq { pop 0 } {
+    dup /symbol sm-ae-get dup (none) eq exch (none-given) eq or 1 index /num get 0 eq or { pop 0 } {
+      dup /symbol sm-ae-get dup (common) eq exch (cut) eq or { pop 2.0 } {
+        dup /text sm-ae-get dup null eq { pop dup /num get sm-ae-cvs } if length
+        exch /den get sm-ae-cvs length sm-ae-max 1.6 mul 0.5 add
+      } ifelse
+    } ifelse
+  } ifelse
+} bind def
+
+% ---------------------------------------------------------------- state per measure
+/sm-ae-phase-state {
+  /sm-ae-keynow sm-ae-S /initial get /key get def
+  /sm-ae-timenow sm-ae-S /initial get /time get def
+  /sm-ae-clefnow [ sm-ae-S /staves get { /clef get } forall ] def
+  0 1 sm-ae-NM 1 sub { /sm-ae-st-i exch def
+    /sm-ae-st-m sm-ae-MS sm-ae-st-i get def
+    sm-ae-st-m /sm-prevkey sm-ae-keynow put
+    sm-ae-st-m /sm-keych false put
+    sm-ae-st-m /sm-timech false put
+    sm-ae-st-m /key sm-ae-get dup null ne {
+      sm-ae-st-i 0 gt { dup /fifths get sm-ae-keynow /fifths get ne } { false } ifelse
+      { sm-ae-st-m /sm-keych true put /sm-ae-keynow exch def }
+      { sm-ae-st-i 0 eq { /sm-ae-keynow exch def } { pop } ifelse } ifelse
+    } { pop } ifelse
+    sm-ae-st-m /time sm-ae-get dup null ne {
+      sm-ae-st-i 0 gt { dup sm-ae-timenow sm-ae-timediff } { false } ifelse
+      { sm-ae-st-m /sm-timech true put /sm-ae-timenow exch def }
+      { sm-ae-st-i 0 eq { /sm-ae-timenow exch def } { pop } ifelse } ifelse
+    } { pop } ifelse
+    /sm-ae-st-cc sm-ae-NS array def
+    /sm-ae-st-any false def
+    /sm-ae-st-cl sm-ae-st-m /clefs sm-ae-get def
+    0 1 sm-ae-NS 1 sub { /sm-ae-st-s exch def
+      sm-ae-st-cl type /arraytype eq { sm-ae-st-s sm-ae-st-cl length lt } { false } ifelse {
+        sm-ae-st-cl sm-ae-st-s get dup null ne {
+          dup sm-ae-clefnow sm-ae-st-s get sm-ae-clefdiff {
+            sm-ae-st-i 0 gt { sm-ae-st-cc sm-ae-st-s 2 index put /sm-ae-st-any true def } if
+            sm-ae-clefnow sm-ae-st-s 3 -1 roll put
+          } { pop } ifelse
+        } { pop } ifelse
+      } if
+    } for
+    sm-ae-st-m /sm-clefch sm-ae-st-cc put
+    sm-ae-st-m /sm-clefany sm-ae-st-any put
+    sm-ae-st-m /sm-key sm-ae-keynow put
+    sm-ae-st-m /sm-time sm-ae-timenow put
+    sm-ae-st-m /sm-clef [ sm-ae-clefnow aload pop ] put
+  } for
+} bind def
+
+% ---------------------------------------------------------------- event geometry
+/sm-ae-bg-flush {
+  sm-ae-bg-g length 2 ge {
+    /sm-ae-bg-hi -999 def /sm-ae-bg-lo 999 def
+    sm-ae-bg-g { /sm-heads get { /pos get dup sm-ae-bg-hi sm-ae-max /sm-ae-bg-hi exch def sm-ae-bg-lo sm-ae-min /sm-ae-bg-lo exch def } forall } forall
+    /sm-ae-bg-dir sm-ae-bg-hi sm-ae-bg-lo add 0 ge { -1 } { 1 } ifelse def
+    /sm-ae-bg-b << /ev sm-ae-bg-g /dir sm-ae-bg-dir /done false >> def
+    sm-ae-bg-g { dup /sm-beam sm-ae-bg-b put /sm-dir sm-ae-bg-dir put } forall
+  } if
+  /sm-ae-bg-g [] def
+} bind def
+/sm-ae-beamgroups { % evs ->
+  /sm-ae-bg-g [] def
+  { /sm-ae-bg-e exch def
+    sm-ae-bg-e sm-ae-isnote { sm-ae-bg-e /type get sm-ae-beams 0 gt } { false } ifelse {
+      sm-ae-bg-e /beam sm-ae-is not sm-ae-bg-g length 0 eq or { sm-ae-bg-flush } if
+      /sm-ae-bg-g sm-ae-bg-g sm-ae-bg-e sm-ae-append def
+    } { sm-ae-bg-flush } ifelse
+  } forall
+  sm-ae-bg-flush
+} bind def
+
+/sm-ae-noteshape { % e ->
+  /sm-ae-ns-e exch def
+  sm-ae-ns-e sm-ae-isnote not {
+    sm-ae-ns-e /rest sm-ae-get dup null ne { /measure sm-ae-is } { pop false } ifelse
+    { /measure } {
+      sm-ae-ns-e /type get sm-ae-fval
+      dup 1 ge { pop /whole } { dup 0.5 ge { pop /half } { 0.25 ge { /quarter } { sm-ae-ns-e /type get sm-ae-beams } ifelse } ifelse } ifelse
+    } ifelse
+    dup sm-ae-ns-e exch /sm-rt exch put
+    sm-ae-resthw exch sm-ae-get dup null eq { pop 0.6 } if
+    sm-ae-ns-e /sm-left 2 index put
+    sm-ae-ns-e /dots sm-ae-get dup null eq { pop 0 } if dup 0 gt { 0.45 mul 0.5 add } { pop 0 } ifelse add
+    sm-ae-ns-e exch /sm-right exch put
+  } {
+    /sm-ae-ns-h sm-ae-ns-e /sm-heads get def
+    /sm-ae-ns-n sm-ae-ns-h length def
+    /sm-ae-ns-v sm-ae-ns-e /type get sm-ae-fval def
+    /sm-ae-ns-stem sm-ae-ns-v 1 lt def
+    sm-ae-ns-e /sm-dir known not {
+      sm-ae-ns-e /sm-dir sm-ae-ns-h sm-ae-ns-n 1 sub get /pos get sm-ae-ns-h 0 get /pos get add 0 ge { -1 } { 1 } ifelse put
+    } if
+    /sm-ae-ns-dir sm-ae-ns-e /sm-dir get def
+    sm-ae-ns-e /sm-stem sm-ae-ns-stem put
+    /sm-ae-ns-hw sm-ae-ns-v 1 ge { sm-ae-HWW } { sm-ae-HW } ifelse def
+    sm-ae-ns-e /sm-hw sm-ae-ns-hw put
+    /sm-ae-ns-off sm-ae-ns-hw 2 mul sm-ae-STEMW sub def
+    /sm-ae-ns-p null def
+    sm-ae-ns-dir 1 eq sm-ae-ns-stem not or {
+      sm-ae-ns-h { /sm-ae-ns-q exch def
+        sm-ae-ns-p null ne {
+          sm-ae-ns-q /pos get sm-ae-ns-p /pos get sub 1 eq sm-ae-ns-p /dx get 0 eq and { sm-ae-ns-q /dx sm-ae-ns-off put } if
+        } if
+        /sm-ae-ns-p sm-ae-ns-q def } forall
+    } {
+      sm-ae-ns-n 1 sub -1 0 { sm-ae-ns-h exch get /sm-ae-ns-q exch def
+        sm-ae-ns-p null ne {
+          sm-ae-ns-p /pos get sm-ae-ns-q /pos get sub 1 eq sm-ae-ns-p /dx get 0 eq and { sm-ae-ns-q /dx sm-ae-ns-off neg put } if
+        } if
+        /sm-ae-ns-p sm-ae-ns-q def } for
+    } ifelse
+    /sm-ae-ns-mind 99 def /sm-ae-ns-maxd -99 def
+    sm-ae-ns-h { /dx get dup sm-ae-ns-mind sm-ae-min /sm-ae-ns-mind exch def sm-ae-ns-maxd sm-ae-max /sm-ae-ns-maxd exch def } forall
+    sm-ae-ns-e /sm-mindx sm-ae-ns-mind put
+    sm-ae-ns-e /sm-maxdx sm-ae-ns-maxd put
+    % accidentals: columns outward from the head, top to bottom
+    /sm-ae-ns-cols [] def
+    sm-ae-ns-n 1 sub -1 0 { sm-ae-ns-h exch get /sm-ae-ns-q exch def
+      sm-ae-ns-q /acc get null ne {
+        /sm-ae-ns-c 0 def
+        { sm-ae-ns-c sm-ae-ns-cols length ge { exit } if
+          false sm-ae-ns-cols sm-ae-ns-c get { /pos get sm-ae-ns-q /pos get sub abs 6 lt or } forall
+          not { exit } if
+          /sm-ae-ns-c sm-ae-ns-c 1 add def } loop
+        sm-ae-ns-c sm-ae-ns-cols length ge { /sm-ae-ns-cols sm-ae-ns-cols [] sm-ae-append def } if
+        sm-ae-ns-cols sm-ae-ns-c 2 copy get sm-ae-ns-q sm-ae-append put
+      } if
+    } for
+    /sm-ae-ns-x sm-ae-ns-mind sm-ae-ns-hw sub 0.22 sub def
+    mark
+    sm-ae-ns-cols { /sm-ae-ns-col exch def
+      /sm-ae-ns-w 0 def
+      sm-ae-ns-col { /acc get cvn sm-ae-accw exch sm-ae-get dup null eq { pop 1 } if sm-ae-ns-w sm-ae-max /sm-ae-ns-w exch def } forall
+      sm-ae-ns-col { /sm-ae-ns-q exch def
+        [ sm-ae-ns-q /pos get sm-ae-ns-q /acc get cvn
+          sm-ae-ns-x sm-ae-ns-w 2 div sub sm-ae-ns-q /acc get (flat) eq { 0.05 sub } if ]
+      } forall
+      /sm-ae-ns-x sm-ae-ns-x sm-ae-ns-w sub 0.12 sub def
+    } forall
+    counttomark array astore exch pop sm-ae-ns-e exch /sm-accs exch put
+    sm-ae-ns-e /sm-left sm-ae-ns-x neg put
+    /sm-ae-ns-lvl sm-ae-ns-e /type get sm-ae-beams def
+    /sm-ae-ns-fl sm-ae-ns-e /sm-beam known not sm-ae-ns-stem and { sm-ae-ns-lvl } { 0 } ifelse def
+    sm-ae-ns-e /sm-flags sm-ae-ns-fl put
+    sm-ae-ns-e /dots sm-ae-get dup null eq { pop 0 } if /sm-ae-ns-dots exch def
+    sm-ae-ns-maxd sm-ae-ns-hw add
+    sm-ae-ns-dots 0 gt { sm-ae-ns-dots 0.45 mul 0.45 add add } if
+    sm-ae-ns-fl 0 gt sm-ae-ns-dir 1 eq and { 1.0 add } if
+    sm-ae-ns-e exch /sm-right exch put
+    sm-ae-ns-stem sm-ae-ns-e /sm-beam known not and {
+      /sm-ae-ns-ex sm-ae-ns-lvl 3 ge { 1.25 } { sm-ae-ns-lvl 2 eq { 0.5 } { 0 } ifelse } ifelse def
+      sm-ae-ns-e /sm-tip
+      sm-ae-ns-dir 1 eq { sm-ae-ns-h sm-ae-ns-n 1 sub get /pos get 2 div 3.5 add sm-ae-ns-ex add 0 sm-ae-max }
+                        { sm-ae-ns-h 0 get /pos get 2 div 3.5 sub sm-ae-ns-ex sub 0 sm-ae-min } ifelse put
+    } if
+  } ifelse
+} bind def
+
+/sm-ae-phase-geom {
+  0 1 sm-ae-NM 1 sub { /sm-ae-gm-i exch def
+    /sm-ae-gm-m sm-ae-MS sm-ae-gm-i get def
+    0 1 sm-ae-NS 1 sub { /sm-ae-gm-s exch def
+      /sm-ae-gm-st sm-ae-gm-m /staves get sm-ae-gm-s get def
+      /sm-ae-gm-t [0 1] def
+      /sm-ae-gm-mid sm-ae-gm-m /sm-clef get sm-ae-gm-s get sm-ae-clefmid def
+      sm-ae-gm-st /events get { /sm-ae-gm-e exch def
+        sm-ae-gm-e /sm-on sm-ae-gm-t put
+        sm-ae-gm-e /sm-st sm-ae-gm-s put
+        sm-ae-gm-e /sm-mi sm-ae-gm-i put
+        /sm-ae-gm-t sm-ae-gm-t sm-ae-gm-e /dur get sm-ae-fadd def
+        sm-ae-gm-e sm-ae-isnote {
+          sm-ae-gm-e /sm-heads [ sm-ae-gm-e /notes get {
+            /sm-ae-gm-n exch def
+            << /pos sm-ae-gm-n sm-ae-gm-mid sm-ae-posof /dx 0 /acc sm-ae-gm-n /acc sm-ae-get
+               /tie sm-ae-gm-n /tie sm-ae-is >>
+          } forall ] { /pos get } sm-ae-isort put
+        } if
+      } forall
+      sm-ae-gm-st /sm-len sm-ae-gm-t put
+      sm-ae-gm-st /events get sm-ae-beamgroups
+      sm-ae-gm-st /events get { sm-ae-noteshape } forall
+    } for
+  } for
+} bind def
+
+% ---------------------------------------------------------------- measure columns
+/sm-ae-fixpair { % i j need ->
+  /sm-ae-fp-need exch def /sm-ae-fp-j exch def /sm-ae-fp-i exch def
+  sm-ae-fp-j sm-ae-cl-n lt {
+    0 sm-ae-fp-i 1 sm-ae-fp-j 1 sub { sm-ae-cl-cols exch get /min get add } for
+    dup sm-ae-fp-need lt {
+      sm-ae-fp-need exch sub sm-ae-cl-cols sm-ae-fp-j 1 sub get dup /min get 3 -1 roll add /min exch put
+    } { pop } ifelse
+  } if
+} bind def
+/sm-ae-phase-cols {
+  sm-ae-MS { /sm-ae-cl-m exch def
+    /sm-ae-cl-cols [] def
+    sm-ae-cl-m /staves get { /events get { /sm-ae-cl-e exch def
+      /sm-ae-cl-k -1 def /sm-ae-cl-ins sm-ae-cl-cols length def
+      0 1 sm-ae-cl-cols length 1 sub { /sm-ae-cl-q exch def
+        sm-ae-cl-cols sm-ae-cl-q get /t get sm-ae-cl-e /sm-on get sm-ae-fcmp
+        dup 0 eq { /sm-ae-cl-k sm-ae-cl-q def } if
+        0 gt sm-ae-cl-ins sm-ae-cl-cols length eq and { /sm-ae-cl-ins sm-ae-cl-q def } if
+      } for
+      sm-ae-cl-k 0 ge {
+        sm-ae-cl-cols sm-ae-cl-k get dup /ents get sm-ae-cl-e sm-ae-append /ents exch put
+      } {
+        /sm-ae-cl-cols [ sm-ae-cl-cols 0 sm-ae-cl-ins getinterval aload pop
+          << /t sm-ae-cl-e /sm-on get /ents [ sm-ae-cl-e ] /lyr 16 array /chw 0 /mrest false /x 0 >>
+          sm-ae-cl-cols sm-ae-cl-ins sm-ae-cl-cols length sm-ae-cl-ins sub getinterval aload pop ] def
+      } ifelse
+    } forall } forall
+    /sm-ae-cl-n sm-ae-cl-cols length def
+    /sm-ae-cl-tot [0 1] def
+    sm-ae-cl-m /staves get { /sm-len get dup sm-ae-cl-tot sm-ae-fcmp 0 gt { /sm-ae-cl-tot exch def } { pop } ifelse } forall
+    0 1 sm-ae-cl-n 1 sub { /sm-ae-cl-i exch def
+      /sm-ae-cl-c sm-ae-cl-cols sm-ae-cl-i get def
+      0 1 15 { sm-ae-cl-c /lyr get exch 0 put } for
+      sm-ae-cl-c /left -99 sm-ae-cl-c /ents get { /sm-left get dup 0 eq { pop 0.6 } if sm-ae-max } forall put
+      sm-ae-cl-c /right -99 sm-ae-cl-c /ents get { /sm-right get dup 0 eq { pop 0.6 } if sm-ae-max } forall put
+      sm-ae-cl-i 1 add sm-ae-cl-n lt { sm-ae-cl-cols sm-ae-cl-i 1 add get /t get } { sm-ae-cl-tot } ifelse
+      sm-ae-cl-c /t get sm-ae-fsub sm-ae-spacefor sm-ae-cl-c exch /ideal exch put
+      sm-ae-cl-c /ents get { /sm-ae-cl-e exch def
+        sm-ae-cl-e /lyrics sm-ae-get dup null ne {
+          0 exch { /sm-ae-cl-l exch def
+            sm-ae-cl-l null ne 1 index 16 lt and {
+              sm-ae-cl-c /lyr get 1 index
+              2 copy get
+              sm-ae-cl-l /text get sm-ae-LYR false sm-ae-aw 2 div sm-ae-sp div sm-ae-cl-l /hyphen sm-ae-is { 0.6 add } if
+              sm-ae-max put
+            } if
+            1 add } forall pop
+        } { pop } ifelse
+        sm-ae-cl-e /chord sm-ae-get dup null ne {
+          sm-ae-CHS false sm-ae-aw sm-ae-sp div 0.9 add sm-ae-cl-c /chw get sm-ae-max sm-ae-cl-c exch /chw exch put
+        } { pop } ifelse
+        sm-ae-cl-e /annot sm-ae-get dup null ne {
+          { dup /pos get dup (above) eq exch (below) eq or {
+              /text get 10 false sm-ae-aw sm-ae-sp div 0.6 add sm-ae-cl-c /chw get sm-ae-max sm-ae-cl-c exch /chw exch put
+            } { pop } ifelse } forall
+        } { pop } ifelse
+        sm-ae-cl-e /dyn sm-ae-get dup null ne {
+          12.5 true sm-ae-aw sm-ae-sp div 0.4 add sm-ae-cl-c /chw get sm-ae-max sm-ae-cl-c exch /chw exch put
+        } { pop } ifelse
+        sm-ae-cl-e /rest sm-ae-get dup null ne { /measure sm-ae-is } { pop false } ifelse {
+          sm-ae-cl-c /ideal get sm-ae-cl-m /mmCount sm-ae-get dup null eq { pop 0 } if 1 gt { 10 } { 7 } ifelse sm-ae-max
+          sm-ae-cl-c exch /ideal exch put
+          sm-ae-cl-c /mrest true put
+        } if
+      } forall
+    } for
+    0 1 sm-ae-cl-n 1 sub { /sm-ae-cl-i exch def
+      /sm-ae-cl-c sm-ae-cl-cols sm-ae-cl-i get def
+      sm-ae-cl-c /min
+        sm-ae-cl-c /right get
+        sm-ae-cl-i 1 add sm-ae-cl-n lt { sm-ae-cl-cols sm-ae-cl-i 1 add get /left get } { 0.4 } ifelse add 0.5 add put
+    } for
+    0 1 sm-ae-cl-n 1 sub { /sm-ae-cl-i exch def
+      /sm-ae-cl-c sm-ae-cl-cols sm-ae-cl-i get def
+      0 1 15 { /sm-ae-cl-v exch def
+        /sm-ae-cl-w sm-ae-cl-c /lyr get sm-ae-cl-v get def
+        sm-ae-cl-w 0 gt {
+          /sm-ae-cl-j -1 def
+          sm-ae-cl-i 1 add 1 sm-ae-cl-n 1 sub { dup sm-ae-cl-cols exch get /lyr get sm-ae-cl-v get 0 gt { /sm-ae-cl-j exch def exit } { pop } ifelse } for
+          sm-ae-cl-j 0 gt {
+            sm-ae-cl-i sm-ae-cl-j sm-ae-cl-w sm-ae-cl-cols sm-ae-cl-j get /lyr get sm-ae-cl-v get add 0.9 add sm-ae-fixpair
+          } {
+            sm-ae-cl-c /min sm-ae-cl-c /min get sm-ae-cl-w 0.3 add sm-ae-max put
+          } ifelse
+        } if
+      } for
+      sm-ae-cl-c /chw get 0 gt {
+        /sm-ae-cl-j -1 def
+        sm-ae-cl-i 1 add 1 sm-ae-cl-n 1 sub { dup sm-ae-cl-cols exch get /chw get 0 gt { /sm-ae-cl-j exch def exit } { pop } ifelse } for
+        sm-ae-cl-j 0 gt { sm-ae-cl-i sm-ae-cl-j sm-ae-cl-c /chw get sm-ae-fixpair }
+          { sm-ae-cl-c /min sm-ae-cl-c /min get sm-ae-cl-c /chw get 0.5 sub sm-ae-max put } ifelse
+      } if
+    } for
+    sm-ae-cl-m /sm-cols sm-ae-cl-cols put
+    % fixed space at the measure start
+    /sm-ae-cl-pre sm-ae-cl-m /startRepeat sm-ae-is { 2.7 } { 1.1 } ifelse def
+    0 sm-ae-cl-cols 0 get /lyr get { sm-ae-max } forall
+    0.3 add sm-ae-cl-cols 0 get /left get sub sm-ae-cl-pre sm-ae-max /sm-ae-cl-pre exch def
+    /sm-ae-cl-pc 0 def
+    sm-ae-cl-m /sm-clefany get { /sm-ae-cl-pc sm-ae-cl-pc 3.2 add def } if
+    sm-ae-cl-m /sm-keych get {
+      /sm-ae-cl-pc sm-ae-cl-pc
+        sm-ae-cl-m /sm-key get /fifths get abs
+        sm-ae-cl-m /sm-key get /fifths get 0 eq { sm-ae-cl-m /sm-prevkey get /fifths get abs } { 0 } ifelse sm-ae-max
+        1.0 add add def
+    } if
+    sm-ae-cl-m /sm-timech get { /sm-ae-cl-pc sm-ae-cl-pc sm-ae-cl-m /sm-time get sm-ae-timew 0.8 add add def } if
+    sm-ae-cl-m /sm-pc sm-ae-cl-pc put
+    sm-ae-cl-m /sm-pre sm-ae-cl-pre sm-ae-cl-pc add put
+    sm-ae-cl-m /sm-barw sm-ae-barw sm-ae-cl-m /endBar sm-ae-get dup null eq { pop (x) } if cvn sm-ae-get dup null eq { pop 0.1 } if put
+  } forall
+} bind def
+
+% measure width at spacing factor f: m f first -> w
+/sm-ae-mwidth {
+  /sm-ae-mw-first exch def /sm-ae-mw-f exch def /sm-ae-mw-m exch def
+  sm-ae-mw-m /sm-pre get sm-ae-mw-m /sm-cols get 0 get /left get add
+  sm-ae-mw-m /sm-cols get { dup /min get exch /ideal get sm-ae-mw-f mul sm-ae-max add } forall
+  sm-ae-mw-m /sm-barw get add
+  sm-ae-mw-first { sm-ae-mw-m /sm-pc get sub } if
+} bind def
+% header width of a system starting at measure i (sp)
+/sm-ae-headerw { % i -> w
+  dup sm-ae-MS exch get /sm-ae-hd-m exch def
+  4.4
+  sm-ae-hd-m /sm-key get /fifths get dup abs 3 -1 roll add exch 0 ne { 0.8 add } if
+  exch 0 eq sm-ae-hd-m /sm-timech get or { sm-ae-hd-m /sm-time get sm-ae-timew 0.8 add add } if
+} bind def
+/sm-ae-linew { % seg f -> w
+  /sm-ae-lw-f exch def /sm-ae-lw-seg exch def
+  sm-ae-lw-seg 0 get sm-ae-headerw
+  0 1 sm-ae-lw-seg length 1 sub { /sm-ae-lw-k exch def
+    sm-ae-MS sm-ae-lw-seg sm-ae-lw-k get get sm-ae-lw-f sm-ae-lw-k 0 eq sm-ae-mwidth add
+  } for
+} bind def
+
+% ---------------------------------------------------------------- line breaking
+/sm-ae-room { sm-ae-systems length 0 eq { sm-ae-avail0 } { sm-ae-avail } ifelse } bind def
+/sm-ae-emit {
+  sm-ae-seg length 0 gt {
+    /sm-ae-em-r sm-ae-room def
+    sm-ae-seg 0.75 sm-ae-linew sm-ae-em-r le {
+      /sm-ae-systems sm-ae-systems sm-ae-seg sm-ae-append def
+    } {
+      /sm-ae-em-k sm-ae-seg 0.9 sm-ae-linew sm-ae-em-r div ceiling cvi def
+      /sm-ae-em-per sm-ae-seg length sm-ae-em-k div def
+      0 1 sm-ae-em-k 1 sub { /sm-ae-em-p exch def
+        /sm-ae-em-a sm-ae-em-p sm-ae-em-per mul round cvi def
+        /sm-ae-em-b sm-ae-em-p 1 add sm-ae-em-per mul round cvi sm-ae-seg length sm-ae-min def
+        sm-ae-em-b sm-ae-em-a gt {
+          /sm-ae-systems sm-ae-systems sm-ae-seg sm-ae-em-a sm-ae-em-b sm-ae-em-a sub getinterval sm-ae-append def
+        } if
+      } for
+    } ifelse
+  } if
+  /sm-ae-seg [] def
+} bind def
+/sm-ae-phase-breaks {
+  /sm-ae-systems [] def
+  /sm-ae-seg [] def
+  false 0 1 sm-ae-NM 2 sub { sm-ae-MS exch get /lineBreak sm-ae-is or } for
+  sm-ae-breaks (auto) ne and {
+    0 1 sm-ae-NM 1 sub { /sm-ae-br-i exch def
+      /sm-ae-seg sm-ae-seg sm-ae-br-i sm-ae-append def
+      sm-ae-MS sm-ae-br-i get /lineBreak sm-ae-is { sm-ae-emit } if
+    } for
+    sm-ae-emit
+  } {
+    0 1 sm-ae-NM 1 sub { /sm-ae-br-i exch def
+      sm-ae-seg length 0 gt { sm-ae-seg sm-ae-br-i sm-ae-append 1 sm-ae-linew sm-ae-room gt } { false } ifelse {
+        /sm-ae-systems sm-ae-systems sm-ae-seg sm-ae-append def /sm-ae-seg [] def
+      } if
+      /sm-ae-seg sm-ae-seg sm-ae-br-i sm-ae-append def
+    } for
+    sm-ae-seg length 0 gt { /sm-ae-systems sm-ae-systems sm-ae-seg sm-ae-append def } if
+  } ifelse
+  /sm-ae-NSYS sm-ae-systems length def
+} bind def
+
+% ---------------------------------------------------------------- justify and place
+/sm-ae-natural { sm-ae-jp-idx exch sm-ae-linew } bind def   % f -> w
+/sm-ae-stemx { % e -> x (points)
+  dup /sm-x get exch dup /sm-hw get sm-ae-STEMW 2 div sub sm-ae-sp mul exch /sm-dir get 1 eq { add } { sub } ifelse
+} bind def
+/sm-ae-phase-place {
+  /sm-ae-sysinfo [ 0 1 sm-ae-NSYS 1 sub { /sm-ae-jp-si exch def
+    /sm-ae-jp-idx sm-ae-systems sm-ae-jp-si get def
+    /sm-ae-jp-x0 sm-ae-left sm-ae-jp-si 0 eq { sm-ae-indent sm-ae-sp mul add } if def
+    /sm-ae-jp-room sm-ae-jp-si 0 eq { sm-ae-avail0 } { sm-ae-avail } ifelse def
+    /sm-ae-jp-hdr sm-ae-jp-idx 0 get sm-ae-headerw def
+    /sm-ae-jp-last sm-ae-jp-si sm-ae-NSYS 1 sub eq def
+    /sm-ae-jp-n1 1 sm-ae-natural def
+    sm-ae-jp-last sm-ae-jp-n1 sm-ae-jp-room 0.72 mul lt and sm-ae-NSYS 1 gt and { /sm-ae-jp-f 1.15 def } {
+      sm-ae-jp-last sm-ae-NSYS 1 eq and sm-ae-jp-n1 sm-ae-jp-room 0.6 mul lt and { /sm-ae-jp-f 1.2 def } {
+        /sm-ae-jp-lo 0.3 def /sm-ae-jp-hi 12 def
+        50 { /sm-ae-jp-mid sm-ae-jp-lo sm-ae-jp-hi add 2 div def
+          sm-ae-jp-mid sm-ae-natural sm-ae-jp-room gt { /sm-ae-jp-hi sm-ae-jp-mid def } { /sm-ae-jp-lo sm-ae-jp-mid def } ifelse } repeat
+        /sm-ae-jp-f sm-ae-jp-lo def
+      } ifelse
+    } ifelse
+    /sm-ae-jp-x sm-ae-jp-x0 sm-ae-jp-hdr sm-ae-sp mul add def
+    0 1 sm-ae-jp-idx length 1 sub { /sm-ae-jp-k exch def
+      /sm-ae-jp-m sm-ae-MS sm-ae-jp-idx sm-ae-jp-k get get def
+      sm-ae-jp-m /sm-sys sm-ae-jp-si put
+      sm-ae-jp-m /sm-x0 sm-ae-jp-x put
+      sm-ae-jp-m /sm-changex sm-ae-jp-x sm-ae-jp-m /startRepeat sm-ae-is { 2.4 } { 0.9 } ifelse sm-ae-sp mul add put
+      /sm-ae-jp-cx sm-ae-jp-x sm-ae-jp-m /sm-pre get sm-ae-jp-k 0 eq { sm-ae-jp-m /sm-pc get sub } if
+        sm-ae-jp-m /sm-cols get 0 get /left get add sm-ae-sp mul add def
+      sm-ae-jp-m /sm-cols get { /sm-ae-jp-c exch def
+        sm-ae-jp-c /x sm-ae-jp-cx put
+        /sm-ae-jp-cx sm-ae-jp-cx sm-ae-jp-c /min get sm-ae-jp-c /ideal get sm-ae-jp-f mul sm-ae-max sm-ae-sp mul add def
+      } forall
+      sm-ae-jp-m /sm-x1 sm-ae-jp-cx sm-ae-jp-m /sm-barw get sm-ae-sp mul add put
+      sm-ae-jp-m /sm-cols get { /sm-ae-jp-c exch def
+        sm-ae-jp-c /ents get { dup /sm-x sm-ae-jp-c /x get put /sm-si sm-ae-jp-si put } forall
+        sm-ae-jp-c /mrest get {
+          sm-ae-jp-c /ents get { dup /rest sm-ae-get dup null ne { /measure sm-ae-is } { pop false } ifelse {
+            /sm-x sm-ae-jp-m /sm-x0 get sm-ae-jp-m /sm-x1 get add 2 div sm-ae-jp-m /startRepeat sm-ae-is { sm-ae-sp add } if put
+          } { pop } ifelse } forall
+        } if
+      } forall
+      /sm-ae-jp-x sm-ae-jp-m /sm-x1 get def
+    } for
+    << /idx sm-ae-jp-idx /x0 sm-ae-jp-x0 /x1 sm-ae-jp-x /hdr sm-ae-jp-hdr >>
+  } for ] def
+} bind def
+
+% ---------------------------------------------------------------- beams
+/sm-ae-layoutbeam { % b ->
+  /sm-ae-lb-b exch def
+  /sm-ae-lb-E sm-ae-lb-b /ev get def
+  /sm-ae-lb-n sm-ae-lb-E length def
+  /sm-ae-lb-dir sm-ae-lb-b /dir get def
+  /sm-ae-lb-xs [ sm-ae-lb-E { sm-ae-stemx sm-ae-sp div } forall ] def
+  /sm-ae-lb-ref [ sm-ae-lb-E { /sm-heads get sm-ae-lb-dir 1 eq { dup length 1 sub get } { 0 get } ifelse /pos get 2 div } forall ] def
+  /sm-ae-lb-lv [ sm-ae-lb-E { /type get sm-ae-beams } forall ] def
+  /sm-ae-lb-r0 sm-ae-lb-ref 0 get def /sm-ae-lb-r1 sm-ae-lb-ref sm-ae-lb-n 1 sub get def
+  /sm-ae-lb-rise sm-ae-lb-r1 sm-ae-lb-r0 sub -1 sm-ae-max 1 sm-ae-min def
+  1 1 sm-ae-lb-n 2 sub { sm-ae-lb-ref exch get
+    sm-ae-lb-dir 1 eq { sm-ae-lb-r0 sm-ae-lb-r1 sm-ae-max gt } { sm-ae-lb-r0 sm-ae-lb-r1 sm-ae-min lt } ifelse
+    { /sm-ae-lb-rise 0 def } if } for
+  /sm-ae-lb-x0 sm-ae-lb-xs 0 get def
+  /sm-ae-lb-dx sm-ae-lb-xs sm-ae-lb-n 1 sub get sm-ae-lb-x0 sub def
+  /sm-ae-lb-slope sm-ae-lb-dx 0 gt { sm-ae-lb-rise sm-ae-lb-dx div 0.6 mul } { 0 } ifelse def
+  sm-ae-lb-dir 1 eq {
+    -999 0 1 sm-ae-lb-n 1 sub { /sm-ae-lb-i exch def
+      sm-ae-lb-ref sm-ae-lb-i get 3.25 add sm-ae-lb-lv sm-ae-lb-i get 1 sub 0.75 mul add
+      sm-ae-lb-slope sm-ae-lb-xs sm-ae-lb-i get sm-ae-lb-x0 sub mul sub sm-ae-max
+      0 sm-ae-lb-slope sm-ae-lb-xs sm-ae-lb-i get sm-ae-lb-x0 sub mul sub sm-ae-max } for
+  } {
+    999 0 1 sm-ae-lb-n 1 sub { /sm-ae-lb-i exch def
+      sm-ae-lb-ref sm-ae-lb-i get 3.25 sub sm-ae-lb-lv sm-ae-lb-i get 1 sub 0.75 mul sub
+      sm-ae-lb-slope sm-ae-lb-xs sm-ae-lb-i get sm-ae-lb-x0 sub mul sub sm-ae-min
+      0 sm-ae-lb-slope sm-ae-lb-xs sm-ae-lb-i get sm-ae-lb-x0 sub mul sub sm-ae-min } for
+  } ifelse
+  /sm-ae-lb-base exch def
+  0 1 sm-ae-lb-n 1 sub { /sm-ae-lb-i exch def
+    sm-ae-lb-E sm-ae-lb-i get /sm-tip sm-ae-lb-base sm-ae-lb-slope sm-ae-lb-xs sm-ae-lb-i get sm-ae-lb-x0 sub mul add put } for
+  sm-ae-lb-b /slope sm-ae-lb-slope put
+  sm-ae-lb-b /base sm-ae-lb-base put
+  sm-ae-lb-b /x0 sm-ae-lb-x0 put
+  sm-ae-lb-b /lv sm-ae-lb-lv put
+  sm-ae-lb-b /done true put
+} bind def
+/sm-ae-phase-beams {
+  sm-ae-MS { /staves get { /events get { /sm-beam sm-ae-get dup null ne { dup /done get { pop } { sm-ae-layoutbeam } ifelse } { pop } ifelse } forall } forall } forall
+} bind def
+
+% ---------------------------------------------------------------- vertical extents
+/sm-ae-phase-vert {
+  /sm-ae-sysv [ 0 1 sm-ae-NSYS 1 sub { /sm-ae-vt-si exch def
+    /sm-ae-vt-idx sm-ae-systems sm-ae-vt-si get def
+    /sm-ae-vt-st [ 0 1 sm-ae-NS 1 sub { /sm-ae-vt-s exch def
+      /sm-ae-vt-top 2.6 def /sm-ae-vt-bot -2.6 def
+      /sm-ae-vt-ch false def /sm-ae-vt-ver 0 def
+      sm-ae-vt-idx { sm-ae-MS exch get /staves get sm-ae-vt-s get /events get { /sm-ae-vt-e exch def
+        sm-ae-vt-e sm-ae-isnote {
+          /sm-ae-vt-h sm-ae-vt-e /sm-heads get def
+          sm-ae-vt-top sm-ae-vt-h dup length 1 sub get /pos get 2 div 0.6 add sm-ae-max
+          sm-ae-vt-e /sm-stem get sm-ae-vt-e /sm-dir get 1 eq and { sm-ae-vt-e /sm-tip get 0.3 add sm-ae-max } if
+          /sm-ae-vt-top exch def
+          sm-ae-vt-bot sm-ae-vt-h 0 get /pos get 2 div 0.6 sub sm-ae-min
+          sm-ae-vt-e /sm-stem get sm-ae-vt-e /sm-dir get -1 eq and { sm-ae-vt-e /sm-tip get 0.3 sub sm-ae-min } if
+          /sm-ae-vt-bot exch def
+        } if
+        sm-ae-vt-e /chord known { /sm-ae-vt-ch true def } if
+        sm-ae-vt-e /lyrics sm-ae-get dup null ne { length sm-ae-vt-ver sm-ae-max /sm-ae-vt-ver exch def } { pop } ifelse
+      } forall } forall
+      << /top sm-ae-vt-top /bot sm-ae-vt-bot >> /sm-ae-vt-v exch def
+      sm-ae-vt-ch { sm-ae-vt-v /chordY sm-ae-vt-top 0.9 add put /sm-ae-vt-top sm-ae-vt-top 3.1 add def } if
+      sm-ae-vt-s 0 eq {
+        false sm-ae-vt-idx { sm-ae-MS exch get /ending sm-ae-get null ne or } forall {
+          sm-ae-vt-v /voltaY sm-ae-vt-top 2.0 add put /sm-ae-vt-top sm-ae-vt-top 2.5 add def } if
+        false sm-ae-vt-idx { sm-ae-MS exch get /part sm-ae-get null ne or } forall {
+          sm-ae-vt-v /partY sm-ae-vt-top 0.8 add put /sm-ae-vt-top sm-ae-vt-top 3.2 add def } if
+        sm-ae-vt-si 0 eq sm-ae-S /tempo sm-ae-get null ne and {
+          sm-ae-vt-v /tempoY sm-ae-vt-top 1.4 add put /sm-ae-vt-top sm-ae-vt-top 3.8 add def } if
+        sm-ae-vt-si 0 gt { /sm-ae-vt-top sm-ae-vt-top 4.6 sm-ae-max def } if
+      } if
+      sm-ae-vt-v /lyricY [ 0 1 sm-ae-vt-ver 1 sub { 2.5 mul sm-ae-vt-bot 2.2 sub exch sub } for ] put
+      sm-ae-vt-ver 0 gt { /sm-ae-vt-bot sm-ae-vt-v /lyricY get sm-ae-vt-ver 1 sub get 0.9 sub def } if
+      sm-ae-vt-v /top sm-ae-vt-top put
+      sm-ae-vt-v /bot sm-ae-vt-bot put
+      sm-ae-vt-v
+    } for ] def
+    /sm-ae-vt-y sm-ae-vt-st 0 get /top get def
+    sm-ae-vt-st 0 get /c sm-ae-vt-y put
+    1 1 sm-ae-NS 1 sub { /sm-ae-vt-s exch def
+      /sm-ae-vt-y sm-ae-vt-y
+        sm-ae-vt-st sm-ae-vt-s 1 sub get /bot get neg sm-ae-vt-st sm-ae-vt-s get /top get add 1.2 add 9.5 sm-ae-max add def
+      sm-ae-vt-st sm-ae-vt-s get /c sm-ae-vt-y put
+    } for
+    << /st sm-ae-vt-st /h sm-ae-vt-y sm-ae-vt-st sm-ae-NS 1 sub get /bot get sub >>
+  } for ] def
+} bind def
+
+% ---------------------------------------------------------------- title block and pages
+% sm-ae-title: draws when sm-ae-ti-draw is true; always leaves the y below it
+/sm-ae-ti-line { % x y t font size align -> (drawn, counted)
+  /sm-ae-ti-n sm-ae-ti-n 1 add def
+  sm-ae-ti-draw { /sm-ae-ti-al exch def 5 -2 roll 2 sm-ae-rn 5 2 roll sm-ae-ti-al cvx exec } { 6 { pop } repeat } ifelse
+} bind def
+/sm-ae-title {
+  /sm-ae-ti-n 0 def
+  /sm-ae-ti-me sm-ae-S /meta get def
+  /sm-ae-ti-y sm-ae-PH sm-ae-o-top sub def
+  sm-ae-ti-me /title sm-ae-get dup null ne { length 0 gt } { pop false } ifelse {
+    /sm-ae-ti-y sm-ae-ti-y 20 sub def
+    sm-ae-PW 2 div sm-ae-ti-y sm-ae-ti-me /title get 20 sm-ae-txt /Times-Bold 20 /sm-text-c sm-ae-ti-line
+    /sm-ae-ti-y sm-ae-ti-y 6 sub def
+  } if
+  sm-ae-ti-me /subtitles sm-ae-get dup null eq { pop [] } if { /sm-ae-ti-s exch def
+    /sm-ae-ti-y sm-ae-ti-y 14 sub def
+    sm-ae-PW 2 div sm-ae-ti-y sm-ae-ti-s 13 sm-ae-txt /Times-Roman 13 /sm-text-c sm-ae-ti-line
+    /sm-ae-ti-y sm-ae-ti-y 2 sub def
+  } forall
+  /sm-ae-ti-comp sm-ae-ti-me /composer sm-ae-get dup null eq { pop () } if def
+  /sm-ae-ti-orig sm-ae-ti-me /origin sm-ae-get dup null eq { pop () } if def
+  /sm-ae-ti-rhy sm-ae-ti-me /rhythm sm-ae-get dup null eq { pop () } if def
+  /sm-ae-ti-r1 sm-ae-ti-comp length 0 gt { sm-ae-ti-comp } { sm-ae-ti-orig } ifelse def
+  /sm-ae-ti-r2 sm-ae-ti-comp length 0 gt sm-ae-ti-orig length 0 gt and { sm-ae-ti-orig } { () } ifelse def
+  sm-ae-ti-r1 length 0 gt sm-ae-ti-rhy length 0 gt or {
+    /sm-ae-ti-y sm-ae-ti-y 16 sub def
+    sm-ae-ti-r1 length 0 gt { sm-ae-right sm-ae-ti-y sm-ae-ti-r1 11 sm-ae-txt /Times-Italic 11 /sm-text-r sm-ae-ti-line } if
+    sm-ae-ti-rhy length 0 gt { sm-ae-left sm-ae-ti-y sm-ae-ti-rhy 11 sm-ae-txt /Times-Italic 11 /sm-text-l sm-ae-ti-line } if
+    sm-ae-ti-r2 length 0 gt {
+      /sm-ae-ti-y sm-ae-ti-y 13 sub def
+      sm-ae-right sm-ae-ti-y sm-ae-ti-r2 11 sm-ae-txt /Times-Italic 11 /sm-text-r sm-ae-ti-line
+    } if
+  } if
+  sm-ae-ti-y sm-ae-ti-n 0 gt { 14 sub } if
+} bind def
+
+/sm-ae-phase-pages {
+  /sm-ae-ti-draw false def
+  /sm-ae-pg-y sm-ae-title def
+  /sm-ae-bottomY sm-ae-o-bottom 14 add def
+  /sm-ae-systop sm-ae-NSYS array def
+  /sm-ae-pageof sm-ae-NSYS array def
+  /sm-ae-pg-n 0 def /sm-ae-pg-cnt 0 def
+  0 1 sm-ae-NSYS 1 sub { /sm-ae-pg-si exch def
+    /sm-ae-pg-h sm-ae-sysv sm-ae-pg-si get /h get sm-ae-sp mul def
+    sm-ae-pg-y sm-ae-pg-h sub sm-ae-bottomY lt sm-ae-pg-cnt 0 gt and {
+      /sm-ae-pg-n sm-ae-pg-n 1 add def /sm-ae-pg-cnt 0 def
+      /sm-ae-pg-y sm-ae-PH sm-ae-o-top sub def
+    } if
+    sm-ae-systop sm-ae-pg-si sm-ae-pg-y put
+    sm-ae-pageof sm-ae-pg-si sm-ae-pg-n put
+    /sm-ae-pg-cnt sm-ae-pg-cnt 1 add def
+    /sm-ae-pg-y sm-ae-pg-y sm-ae-pg-h sub 3.2 sm-ae-sp mul sub def
+  } for
+  % words after the tune
+  /sm-ae-words sm-ae-S /meta get /words sm-ae-get dup null eq { pop [] } if def
+  sm-ae-words length 0 gt {
+    /sm-ae-wpage sm-ae-pg-n def
+    /sm-ae-wy sm-ae-pg-y 3.2 sm-ae-sp mul add 10 sub def
+    sm-ae-wy 14 sm-ae-words length mul sub sm-ae-bottomY lt {
+      /sm-ae-pg-n sm-ae-pg-n 1 add def /sm-ae-wpage sm-ae-pg-n def
+      /sm-ae-wy sm-ae-PH sm-ae-o-top sub def
+    } if
+  } { /sm-ae-wpage -1 def } ifelse
+  /sm-ae-NPAGES sm-ae-pg-n 1 add def
+} bind def
+
+/sm-ae-staffy { % si s -> y
+  exch dup sm-ae-systop exch get exch sm-ae-sysv exch get /st get 3 -1 roll get /c get sm-ae-sp mul sub
+} bind def
+
+% ---------------------------------------------------------------- drawing: header, bars
+/sm-ae-clefat { % x si s clef ->
+  /sm-ae-ca-c exch def sm-ae-staffy /sm-ae-ca-y exch def /sm-ae-ca-x exch def
+  sm-ae-ca-c /sign get (G) eq {
+    sm-ae-ca-x sm-ae-ca-y sm-ae-sp sub 2 sm-ae-rn
+    sm-ae-ca-c /octave sm-ae-get -1 eq { sm-clef-treble8 } { sm-clef-treble } ifelse
+  } {
+    sm-ae-ca-c /sign get (F) eq { sm-ae-ca-x sm-ae-ca-y sm-ae-sp add 2 sm-ae-rn sm-clef-bass }
+      { sm-ae-ca-x sm-ae-ca-y sm-ae-ca-c /line get 3 sub sm-ae-sp mul add 2 sm-ae-rn sm-clef-alto } ifelse
+  } ifelse
+} bind def
+/sm-ae-keyat { % x si s fifths clef cancel -> x'
+  /sm-ae-ka-cancel exch def /sm-ae-ka-clef exch def /sm-ae-ka-f exch def
+  sm-ae-staffy /sm-ae-ka-c exch def /sm-ae-ka-x exch def
+  /sm-ae-ka-off sm-ae-ka-clef sm-ae-keyoff def
+  sm-ae-ka-cancel 0 ne {
+    /sm-ae-ka-l sm-ae-ka-cancel 0 gt { sm-ae-ksharps } { sm-ae-kflats } ifelse def
+    0 1 sm-ae-ka-cancel abs 1 sub { sm-ae-ka-l exch get sm-ae-ka-off add /sm-ae-ka-p exch def
+      sm-ae-ka-x 0.4 sm-ae-sp mul add sm-ae-ka-c sm-ae-ka-p sm-ae-sp mul 2 div add 2 sm-ae-rn sm-acc-natural
+      /sm-ae-ka-x sm-ae-ka-x 0.9 sm-ae-sp mul add def } for
+    /sm-ae-ka-x sm-ae-ka-x 0.5 sm-ae-sp mul add def
+  } if
+  /sm-ae-ka-l sm-ae-ka-f 0 gt { sm-ae-ksharps } { sm-ae-kflats } ifelse def
+  0 1 sm-ae-ka-f abs 1 sub { sm-ae-ka-l exch get sm-ae-ka-off add /sm-ae-ka-p exch def
+    sm-ae-ka-f 0 gt sm-ae-ka-clef /sign get (C) eq and sm-ae-ka-clef /line get 4 eq and sm-ae-ka-p 4 gt and
+      { /sm-ae-ka-p sm-ae-ka-p 7 sub def } if
+    sm-ae-ka-x 0.5 sm-ae-sp mul add sm-ae-ka-c sm-ae-ka-p sm-ae-sp mul 2 div add 2 sm-ae-rn
+    sm-ae-ka-f 0 gt { sm-acc-sharp } { sm-acc-flat } ifelse
+    /sm-ae-ka-x sm-ae-ka-x sm-ae-sp add def } for
+  sm-ae-ka-x sm-ae-ka-f 0 ne { 0.8 sm-ae-sp mul add } if
+} bind def
+/sm-ae-timeat { % x si s time ->
+  /sm-ae-ta-t exch def sm-ae-staffy /sm-ae-ta-c exch def /sm-ae-ta-x exch def
+  sm-ae-ta-t sm-ae-timew 0 gt {
+    sm-ae-ta-x sm-ae-ta-c 2 sm-ae-rn
+    sm-ae-ta-t /symbol sm-ae-get dup (common) eq { pop sm-ts-common } { (cut) eq { sm-ts-cut } {
+      sm-ae-ta-t /text sm-ae-get dup null eq { pop sm-ae-ta-t /num get sm-ae-cvs } if
+      sm-ae-ta-t /den get sm-ae-cvs sm-timesig } ifelse } ifelse
+  } if
+} bind def
+/sm-ae-barat { % x si type startRepeat ->
+  /sm-ae-ba-sr exch def /sm-ae-ba-t exch def /sm-ae-ba-si exch def /sm-ae-ba-x exch def
+  /sm-ae-ba-top sm-ae-ba-si 0 sm-ae-staffy 2 sm-ae-sp mul add def
+  /sm-ae-ba-bot sm-ae-ba-si sm-ae-NS 1 sub sm-ae-staffy 2 sm-ae-sp mul sub def
+  sm-ae-ba-t (repeat-end) eq sm-ae-ba-sr and {
+    -1.95 sm-ae-ba-dots -1.3 sm-ae-ba-thin -0.6 sm-ae-ba-thick 0.1 sm-ae-ba-thin 0.75 sm-ae-ba-dots } {
+  sm-ae-ba-t (repeat-end) eq { -1.95 sm-ae-ba-dots -1.3 sm-ae-ba-thin -0.25 sm-ae-ba-thick } {
+  sm-ae-ba-sr { 0.25 sm-ae-ba-thick 0.9 sm-ae-ba-thin 1.55 sm-ae-ba-dots } {
+  sm-ae-ba-t (double) eq { -0.6 sm-ae-ba-thin 0 sm-ae-ba-thin } {
+  sm-ae-ba-t (final) eq { -0.85 sm-ae-ba-thin -0.25 sm-ae-ba-thick } {
+  sm-ae-ba-t (thick-thin) eq { -0.75 sm-ae-ba-thick 0 sm-ae-ba-thin } {
+  0 sm-ae-ba-thin } ifelse } ifelse } ifelse } ifelse } ifelse } ifelse
+} bind def
+/sm-ae-ba-thin { sm-ae-sp mul sm-ae-ba-x add sm-ae-ba-top sm-ae-ba-bot 3 sm-ae-rn sm-bar-thin } bind def
+/sm-ae-ba-thick { sm-ae-sp mul sm-ae-ba-x add sm-ae-ba-top sm-ae-ba-bot 3 sm-ae-rn sm-bar-thick } bind def
+/sm-ae-ba-dots { sm-ae-sp mul sm-ae-ba-x add
+  0 1 sm-ae-NS 1 sub { sm-ae-ba-si exch sm-ae-staffy 1 index exch 2 sm-ae-rn sm-repeat-dots } for pop } bind def
+
+% ---------------------------------------------------------------- drawing: events
+/sm-ae-parsechord { % (s) -> root acc kind bass bacc true | false
+  /sm-ae-pc-s exch def
+  { sm-ae-pc-s length 0 gt { sm-ae-pc-s 0 get 32 le } { false } ifelse { /sm-ae-pc-s sm-ae-pc-s 1 sm-ae-pc-s length 1 sub getinterval def } { exit } ifelse } loop
+  { sm-ae-pc-s length 0 gt { sm-ae-pc-s dup length 1 sub get 32 le } { false } ifelse { /sm-ae-pc-s sm-ae-pc-s 0 sm-ae-pc-s length 1 sub getinterval def } { exit } ifelse } loop
+  sm-ae-pc-s length 0 eq { false } {
+    sm-ae-pc-s 0 get dup 65 ge exch 71 le and not { false } {
+      /sm-ae-pc-root sm-ae-pc-s 0 1 getinterval def
+      /sm-ae-pc-i 1 def /sm-ae-pc-acc 0 def
+      sm-ae-pc-s length 1 gt { sm-ae-pc-s 1 get dup 35 eq { pop /sm-ae-pc-acc 1 def /sm-ae-pc-i 2 def } { 98 eq { /sm-ae-pc-acc -1 def /sm-ae-pc-i 2 def } if } ifelse } if
+      /sm-ae-pc-rest sm-ae-pc-s sm-ae-pc-i sm-ae-pc-s length sm-ae-pc-i sub getinterval def
+      sm-ae-pc-rest (/) search {
+        /sm-ae-pc-kind exch def pop /sm-ae-pc-b exch def
+        sm-ae-pc-b length 1 ge sm-ae-pc-b length 2 le and {
+          sm-ae-pc-b 0 get dup 65 ge exch 71 le and
+          sm-ae-pc-b length 2 eq { sm-ae-pc-b 1 get dup 35 eq exch 98 eq or and } if
+        } { false } ifelse {
+          sm-ae-pc-root sm-ae-pc-acc sm-ae-pc-kind sm-ae-pc-b 0 1 getinterval
+          sm-ae-pc-b length 2 eq { sm-ae-pc-b 1 get 35 eq { 1 } { -1 } ifelse } { 0 } ifelse true
+        } { false } ifelse
+      } {
+        /sm-ae-pc-kind exch def
+        sm-ae-pc-root sm-ae-pc-acc sm-ae-pc-kind () 0 true
+      } ifelse
+    } ifelse
+  } ifelse
+} bind def
+/sm-ae-drawdecos { % e V c ->
+  /sm-ae-dd-c exch def /sm-ae-dd-V exch def /sm-ae-dd-e exch def
+  /sm-ae-dd-x sm-ae-dd-e /sm-x get def
+  /sm-ae-dd-note sm-ae-dd-e sm-ae-isnote def
+  sm-ae-dd-e /chord sm-ae-get dup null ne sm-ae-dd-V /chordY known and {
+    /sm-ae-dd-ch exch def
+    sm-ae-dd-x sm-ae-dd-note { sm-ae-dd-e /sm-hw get } { 0.5 } ifelse sm-ae-sp mul sub
+    sm-ae-dd-c sm-ae-dd-V /chordY get sm-ae-sp mul add 2 sm-ae-rn
+    sm-ae-dd-ch sm-ae-parsechord {
+      3 -1 roll sm-ae-CHS sm-ae-txt 3 1 roll sm-chordsym
+    } { sm-ae-dd-ch sm-ae-CHS sm-ae-txt /Times-Roman sm-ae-CHS sm-text-l } ifelse
+  } { pop } ifelse
+  sm-ae-dd-e /lyrics sm-ae-get dup null ne {
+    0 exch { /sm-ae-dd-l exch def
+      sm-ae-dd-l null ne { sm-ae-dd-l /text get length 0 gt } { false } ifelse {
+        sm-ae-dd-x sm-ae-dd-c sm-ae-dd-V /lyricY get 3 index get sm-ae-sp mul add 2 sm-ae-rn
+        sm-ae-dd-l /text get sm-ae-LYR sm-ae-txt sm-lyric
+      } if
+      1 add } forall pop
+  } { pop } ifelse
+} bind def
+/sm-ae-drawevent { % si s e V ->
+  /sm-ae-de-V exch def /sm-ae-de-e exch def
+  sm-ae-staffy /sm-ae-de-c exch def
+  /sm-ae-de-x sm-ae-de-e /sm-x get def
+  /sm-ae-de-dots sm-ae-de-e /dots sm-ae-get dup null eq { pop 0 } if def
+  sm-ae-de-e sm-ae-isnote not {
+    sm-ae-de-e /rest sm-ae-get dup null ne { /invisible sm-ae-is } { pop false } ifelse
+    sm-ae-de-mm 1 gt or not {
+      /sm-ae-de-rt sm-ae-de-e /sm-rt get def
+      sm-ae-de-x sm-ae-de-c 2 sm-ae-rn
+      sm-ae-de-rt type /integertype eq { sm-ae-de-rt sm-rest-flagged } {
+        sm-ae-de-rt /measure eq sm-ae-de-rt /whole eq or { sm-rest-whole } {
+          sm-ae-de-rt /half eq { sm-rest-half } { sm-rest-quarter } ifelse } ifelse } ifelse
+      0 1 sm-ae-de-dots 1 sub { 0.45 mul 0.95 add sm-ae-sp mul sm-ae-de-x add sm-ae-de-c 0.5 sm-ae-sp mul add 2 sm-ae-rn sm-dot } for
+      sm-ae-de-e sm-ae-de-V sm-ae-de-c sm-ae-drawdecos
+    } if
+  } {
+    /sm-ae-de-h sm-ae-de-e /sm-heads get def
+    /sm-ae-de-hw sm-ae-de-e /sm-hw get def
+    /sm-ae-de-hi sm-ae-de-h dup length 1 sub get /pos get def
+    /sm-ae-de-lo sm-ae-de-h 0 get /pos get def
+    /sm-ae-de-mind sm-ae-de-e /sm-mindx get def /sm-ae-de-maxd sm-ae-de-e /sm-maxdx get def
+    /sm-ae-de-lx sm-ae-de-x sm-ae-de-mind sm-ae-de-hw sub 0.45 sub sm-ae-sp mul add def
+    /sm-ae-de-rx sm-ae-de-x sm-ae-de-maxd sm-ae-de-hw add 0.45 add sm-ae-sp mul add def
+    6 2 sm-ae-de-hi { sm-ae-de-lx sm-ae-de-rx 3 -1 roll sm-ae-sp mul 2 div sm-ae-de-c add 3 sm-ae-rn sm-ledger } for
+    -6 -2 sm-ae-de-lo { sm-ae-de-lx sm-ae-de-rx 3 -1 roll sm-ae-sp mul 2 div sm-ae-de-c add 3 sm-ae-rn sm-ledger } for
+    /sm-ae-de-v sm-ae-de-e /type get sm-ae-fval def
+    /sm-ae-de-proc sm-ae-de-v 2 ge { /sm-head-breve } { sm-ae-de-v 1 ge { /sm-head-whole } { sm-ae-de-v 0.5 ge { /sm-head-half } { /sm-head-black } ifelse } ifelse } ifelse def
+    sm-ae-de-h { dup /dx get sm-ae-sp mul sm-ae-de-x add exch /pos get sm-ae-sp mul 2 div sm-ae-de-c add 2 sm-ae-rn sm-ae-de-proc load exec } forall
+    sm-ae-de-e /sm-accs get { aload pop % pos type dx
+      sm-ae-sp mul sm-ae-de-x add 3 -1 roll sm-ae-sp mul 2 div sm-ae-de-c add 2 sm-ae-rn 3 -1 roll sm-ae-accproc exch get load exec } forall
+    sm-ae-de-dots 0 gt {
+      /sm-ae-de-dx0 sm-ae-de-maxd sm-ae-de-hw add 0.5 add def
+      /sm-ae-de-used [] def
+      sm-ae-de-h { /pos get dup 2 mod 0 eq { 1 add } if
+        false sm-ae-de-used { 2 index eq or } forall { 2 sub } if
+        /sm-ae-de-used sm-ae-de-used 2 index sm-ae-append def
+        /sm-ae-de-p exch def
+        0 1 sm-ae-de-dots 1 sub { 0.45 mul sm-ae-de-dx0 add sm-ae-sp mul sm-ae-de-x add sm-ae-de-c sm-ae-de-p sm-ae-sp mul 2 div add 2 sm-ae-rn sm-dot } for
+      } forall
+    } if
+    sm-ae-de-e /sm-stem get {
+      /sm-ae-de-sx sm-ae-de-e sm-ae-stemx def
+      /sm-ae-de-tip sm-ae-de-e /sm-tip get def
+      sm-ae-de-sx
+      sm-ae-de-e /sm-dir get 1 eq { sm-ae-de-lo 2 div 0.18 add } { sm-ae-de-hi 2 div 0.18 sub } ifelse sm-ae-sp mul sm-ae-de-c add
+      sm-ae-de-c sm-ae-de-tip sm-ae-sp mul add 3 sm-ae-rn sm-stem
+      sm-ae-de-e /sm-flags get 0 gt {
+        sm-ae-de-sx sm-ae-STEMW 2 div sm-ae-sp mul sub sm-ae-de-c sm-ae-de-tip sm-ae-sp mul add 2 sm-ae-rn
+        sm-ae-de-e /sm-flags get sm-ae-de-e /sm-dir get 1 eq sm-flags
+      } if
+    } if
+    sm-ae-de-e sm-ae-de-V sm-ae-de-c sm-ae-drawdecos
+  } ifelse
+} bind def
+/sm-ae-drawbeam { % si s b ->
+  /sm-ae-db-b exch def sm-ae-staffy /sm-ae-db-c exch def
+  /sm-ae-db-E sm-ae-db-b /ev get def /sm-ae-db-n sm-ae-db-E length def
+  /sm-ae-db-xs [ sm-ae-db-E { sm-ae-stemx } forall ] def
+  /sm-ae-db-lv sm-ae-db-b /lv get def
+  /sm-ae-db-ext sm-ae-STEMW 2 div sm-ae-sp mul def
+  /sm-ae-db-dir sm-ae-db-b /dir get def
+  0 sm-ae-db-lv { sm-ae-max } forall /sm-ae-db-maxl exch def
+  1 1 sm-ae-db-maxl { /sm-ae-db-k exch def
+    /sm-ae-db-shift sm-ae-db-k 1 sub 0.75 mul sm-ae-db-dir mul def
+    /sm-ae-db-i 0 def
+    { sm-ae-db-i sm-ae-db-n ge { exit } if
+      sm-ae-db-lv sm-ae-db-i get sm-ae-db-k lt { /sm-ae-db-i sm-ae-db-i 1 add def } {
+        /sm-ae-db-j sm-ae-db-i def
+        { sm-ae-db-j 1 add sm-ae-db-n lt { sm-ae-db-lv sm-ae-db-j 1 add get sm-ae-db-k ge } { false } ifelse
+          { /sm-ae-db-j sm-ae-db-j 1 add def } { exit } ifelse } loop
+        /sm-ae-db-xa sm-ae-db-xs sm-ae-db-i get sm-ae-db-ext sub def
+        /sm-ae-db-xb sm-ae-db-xs sm-ae-db-j get sm-ae-db-ext add def
+        sm-ae-db-i sm-ae-db-j eq {
+          sm-ae-db-i sm-ae-db-n 1 sub eq
+          sm-ae-db-i 0 gt { sm-ae-db-E sm-ae-db-i 1 sub get /dots sm-ae-get dup null eq { pop 0 } if 0 gt } { false } ifelse or
+          { /sm-ae-db-xa sm-ae-db-xs sm-ae-db-i get 1.15 sm-ae-sp mul sub def }
+          { /sm-ae-db-xb sm-ae-db-xs sm-ae-db-i get 1.15 sm-ae-sp mul add def } ifelse
+        } if
+        sm-ae-db-xa sm-ae-db-c sm-ae-db-xa sm-ae-db-yat sm-ae-db-shift sub sm-ae-sp mul add
+        sm-ae-db-xb sm-ae-db-c sm-ae-db-xb sm-ae-db-yat sm-ae-db-shift sub sm-ae-sp mul add 4 sm-ae-rn
+        sm-ae-db-dir sm-beam
+        /sm-ae-db-i sm-ae-db-j 1 add def
+      } ifelse
+    } loop
+  } for
+} bind def
+/sm-ae-db-yat { sm-ae-sp div sm-ae-db-b /x0 get sub sm-ae-db-b /slope get mul sm-ae-db-b /base get add } bind def
+
+% ---------------------------------------------------------------- drawing: measures and systems
+/sm-ae-drawmeasure { % si mi first ->
+  /sm-ae-dm-first exch def /sm-ae-dm-mi exch def /sm-ae-dm-si exch def
+  /sm-ae-dm-m sm-ae-MS sm-ae-dm-mi get def
+  sm-ae-dm-first {
+    sm-ae-dm-m /startRepeat sm-ae-is { sm-ae-dm-m /sm-x0 get 0.15 sm-ae-sp mul sub sm-ae-dm-si (single) true sm-ae-barat } if
+  } {
+    sm-ae-dm-m /sm-x0 get sm-ae-dm-si sm-ae-MS sm-ae-dm-mi 1 sub get /endBar sm-ae-get sm-ae-dm-m /startRepeat sm-ae-is sm-ae-barat
+  } ifelse
+  sm-ae-dm-first not sm-ae-dm-m /sm-keych get sm-ae-dm-m /sm-timech get or sm-ae-dm-m /sm-clefany get or and {
+    0 1 sm-ae-NS 1 sub { /sm-ae-dm-s exch def
+      /sm-ae-dm-x sm-ae-dm-m /sm-changex get def
+      sm-ae-dm-m /sm-clefch get sm-ae-dm-s get dup null ne {
+        sm-ae-dm-x sm-ae-dm-si sm-ae-dm-s 4 -1 roll sm-ae-clefat /sm-ae-dm-x sm-ae-dm-x 3.2 sm-ae-sp mul add def } { pop } ifelse
+      sm-ae-dm-m /sm-keych get {
+        /sm-ae-dm-x sm-ae-dm-x sm-ae-dm-si sm-ae-dm-s sm-ae-dm-m /sm-key get /fifths get sm-ae-dm-m /sm-clef get sm-ae-dm-s get
+        sm-ae-dm-m /sm-key get /fifths get 0 eq { sm-ae-dm-m /sm-prevkey get /fifths get } { 0 } ifelse sm-ae-keyat def
+      } if
+      sm-ae-dm-m /sm-timech get {
+        sm-ae-dm-x sm-ae-dm-m /sm-time get sm-ae-timew 2 div sm-ae-sp mul add sm-ae-dm-si sm-ae-dm-s sm-ae-dm-m /sm-time get sm-ae-timeat
+      } if
+    } for
+  } if
+  sm-ae-systems sm-ae-dm-si get dup length 1 sub get sm-ae-dm-mi eq {
+    sm-ae-dm-m /sm-x1 get sm-ae-dm-si sm-ae-dm-m /endBar sm-ae-get false sm-ae-barat
+  } if
+  sm-ae-dm-m /part sm-ae-get dup null ne {
+    sm-ae-dm-m /sm-x0 get 0.3 sm-ae-sp mul add sm-ae-dm-si 0 sm-ae-staffy sm-ae-sysv sm-ae-dm-si get /st get 0 get /partY get sm-ae-sp mul add 2 sm-ae-rn
+    3 -1 roll 13 sm-ae-txt /Times-Bold 13 sm-text-l
+  } { pop } ifelse
+  sm-ae-dm-m /ending sm-ae-get dup null ne { /sm-ae-dm-en exch def
+    /sm-ae-dm-sys sm-ae-systems sm-ae-dm-si get def
+    /sm-ae-dm-full sm-ae-dm-mi sm-ae-dm-en /span get add 1 sub def
+    /sm-ae-dm-last sm-ae-dm-full sm-ae-dm-sys dup length 1 sub get sm-ae-min def
+    /sm-ae-dm-lab sm-ae-dm-en /label get def
+    sm-ae-dm-lab length 0 gt { sm-ae-dm-lab 0 get dup 48 ge exch 57 le and } { false } ifelse {
+      () sm-ae-dm-lab { dup 44 eq { pop (, ) } { 1 string dup 0 4 -1 roll put } ifelse sm-ae-cat } forall (.) sm-ae-cat /sm-ae-dm-lab exch def
+    } if
+    sm-ae-dm-m /sm-x0 get 0.1 sm-ae-sp mul add
+    sm-ae-MS sm-ae-dm-last get /sm-x1 get 0.7 sm-ae-sp mul sub
+    sm-ae-dm-si 0 sm-ae-staffy sm-ae-sysv sm-ae-dm-si get /st get 0 get /voltaY get sm-ae-sp mul add 3 sm-ae-rn
+    sm-ae-dm-lab 11 sm-ae-txt
+    sm-ae-dm-en /closed sm-ae-is sm-ae-dm-last sm-ae-dm-full eq and sm-volta
+  } { pop } ifelse
+  /sm-ae-de-mm sm-ae-dm-m /mmCount sm-ae-get dup null eq { pop 0 } if def
+  0 1 sm-ae-NS 1 sub { /sm-ae-dm-s exch def
+    /sm-ae-dm-evs sm-ae-dm-m /staves get sm-ae-dm-s get /events get def
+    /sm-ae-dm-V sm-ae-sysv sm-ae-dm-si get /st get sm-ae-dm-s get def
+    sm-ae-dm-evs { sm-ae-dm-si sm-ae-dm-s 3 -1 roll sm-ae-dm-V sm-ae-drawevent } forall
+    sm-ae-dm-evs { /sm-beam sm-ae-get dup null ne {
+        dup /drawn sm-ae-is { pop } { dup /drawn true put sm-ae-dm-si sm-ae-dm-s 3 -1 roll sm-ae-drawbeam } ifelse
+      } { pop } ifelse } forall
+    sm-ae-de-mm 1 gt {
+      sm-ae-dm-m /sm-x0 get sm-ae-dm-m /sm-pre get 0.5 add sm-ae-sp mul add
+      sm-ae-dm-m /sm-x1 get 1.6 sm-ae-sp mul sub
+      sm-ae-dm-si sm-ae-dm-s sm-ae-staffy 3 sm-ae-rn sm-ae-de-mm sm-ae-cvs sm-mmrest
+    } if
+  } for
+} bind def
+
+/sm-ae-drawsystem { % si ->
+  /sm-ae-ds-si exch def
+  /sm-ae-ds-info sm-ae-sysinfo sm-ae-ds-si get def
+  /sm-ae-ds-idx sm-ae-ds-info /idx get def
+  /sm-ae-ds-x0 sm-ae-ds-info /x0 get def /sm-ae-ds-x1 sm-ae-ds-info /x1 get def
+  /sm-ae-ds-top sm-ae-ds-si 0 sm-ae-staffy 2 sm-ae-sp mul add def
+  /sm-ae-ds-bot sm-ae-ds-si sm-ae-NS 1 sub sm-ae-staffy 2 sm-ae-sp mul sub def
+  0 1 sm-ae-NS 1 sub { sm-ae-ds-x0 exch sm-ae-ds-si exch sm-ae-staffy sm-ae-ds-x1 sm-ae-ds-x0 sub 3 sm-ae-rn sm-staff } for
+  sm-ae-NS 1 gt {
+    sm-ae-ds-x0 sm-ae-ds-top sm-ae-ds-bot 3 sm-ae-rn sm-bar-thin
+    sm-ae-S /group sm-ae-get (brace) eq {
+      sm-ae-ds-x0 0.5 sm-ae-sp mul sub sm-ae-ds-top sm-ae-ds-bot 3 sm-ae-rn sm-brace
+    } {
+      sm-ae-ds-x0 0.3 sm-ae-sp mul sub sm-ae-ds-top 0.1 sm-ae-sp mul add sm-ae-ds-bot 0.1 sm-ae-sp mul sub 3 sm-ae-rn sm-bracket
+    } ifelse
+  } if
+  sm-ae-ds-si 0 eq sm-ae-indent 0 gt and {
+    0 1 sm-ae-NS 1 sub { /sm-ae-ds-s exch def
+      sm-ae-S /staves get sm-ae-ds-s get /name sm-ae-get dup null eq { pop () } if dup length 0 gt {
+        sm-ae-ds-x0 1.2 sm-ae-sp mul sub sm-ae-ds-si sm-ae-ds-s sm-ae-staffy 3 sub 2 sm-ae-rn 3 -1 roll 10 sm-ae-txt /Times-Roman 10 sm-text-r
+      } { pop } ifelse
+    } for
+  } if
+  /sm-ae-ds-m0 sm-ae-MS sm-ae-ds-idx 0 get get def
+  0 1 sm-ae-NS 1 sub { /sm-ae-ds-s exch def
+    /sm-ae-ds-x sm-ae-ds-x0 0.8 sm-ae-sp mul add def
+    sm-ae-ds-x sm-ae-ds-si sm-ae-ds-s sm-ae-ds-m0 /sm-clef get sm-ae-ds-s get sm-ae-clefat
+    /sm-ae-ds-x sm-ae-ds-x 3.6 sm-ae-sp mul add def
+    /sm-ae-ds-x sm-ae-ds-x sm-ae-ds-si sm-ae-ds-s sm-ae-ds-m0 /sm-key get /fifths get sm-ae-ds-m0 /sm-clef get sm-ae-ds-s get 0 sm-ae-keyat def
+    sm-ae-ds-idx 0 get 0 eq sm-ae-ds-m0 /sm-timech get or {
+      sm-ae-ds-x sm-ae-ds-m0 /sm-time get sm-ae-timew 2 div sm-ae-sp mul add sm-ae-ds-si sm-ae-ds-s sm-ae-ds-m0 /sm-time get sm-ae-timeat
+    } if
+  } for
+  sm-ae-ds-si 0 gt sm-ae-ds-m0 /number sm-ae-get dup null eq { pop 0 } if 0 gt and {
+    sm-ae-ds-x0 sm-ae-NS 1 gt { 0.6 } { 0.2 } ifelse sm-ae-sp mul add sm-ae-ds-si 0 sm-ae-staffy 3.6 sm-ae-sp mul add 2 sm-ae-rn
+    sm-ae-ds-m0 /number get sm-ae-cvs /Times-Italic 8.5 sm-text-l
+  } if
+  0 1 sm-ae-ds-idx length 1 sub { /sm-ae-ds-k exch def
+    sm-ae-ds-si sm-ae-ds-idx sm-ae-ds-k get sm-ae-ds-k 0 eq sm-ae-drawmeasure } for
+  0 1 sm-ae-NS 1 sub { sm-ae-ds-si exch sm-ae-ties } for
+  0 1 sm-ae-NS 1 sub { sm-ae-ds-si exch sm-ae-lyriclines } for
+} bind def
+
+% ---------------------------------------------------------------- ties and lyric lines (per system)
+/sm-ae-phase-seq {
+  /sm-ae-seqs [ 0 1 sm-ae-NS 1 sub { /sm-ae-sq-s exch def
+    [ sm-ae-MS { /staves get sm-ae-sq-s get /events get aload pop } forall ]
+    dup /sm-ae-sq-a exch def
+    0 1 sm-ae-sq-a length 1 sub { /sm-ae-sq-k exch def
+      sm-ae-sq-a sm-ae-sq-k get /sm-seqi sm-ae-sq-k put
+      sm-ae-sq-a sm-ae-sq-k get sm-ae-isnote {
+        /sm-ae-sq-nx null def
+        sm-ae-sq-k 1 add 1 sm-ae-sq-a length 1 sub { sm-ae-sq-a exch get
+          dup sm-ae-isnote { /sm-ae-sq-nx exch def exit } if
+          /rest sm-ae-get dup null ne { /invisible sm-ae-is } { pop false } ifelse not { exit } if
+        } for
+        sm-ae-sq-a sm-ae-sq-k get /sm-next sm-ae-sq-nx put
+      } if
+    } for
+  } for ] def
+} bind def
+/sm-ae-tiepiece { % xa xb pos ->
+  /sm-ae-tp-pos exch def /sm-ae-tp-xb exch def /sm-ae-tp-xa exch def
+  sm-ae-ti2-si sm-ae-tp-s sm-ae-staffy /sm-ae-tp-c exch def
+  /sm-ae-tp-len sm-ae-tp-xb sm-ae-tp-xa sub sm-ae-sp div def
+  /sm-ae-tp-y sm-ae-tp-c sm-ae-tp-pos 2 div sm-ae-tp-dy add sm-ae-sp mul add def
+  sm-ae-tp-xa sm-ae-tp-y sm-ae-tp-xb sm-ae-tp-y
+  sm-ae-tp-side 1.5 0.45 0.08 sm-ae-tp-len mul add sm-ae-min mul sm-ae-sp mul 5 sm-ae-rn sm-tie
+} bind def
+/sm-ae-ties { % si s ->
+  /sm-ae-tp-s exch def /sm-ae-ti2-si exch def
+  sm-ae-seqs sm-ae-tp-s get { /sm-ae-ti2-e exch def
+    sm-ae-ti2-e sm-ae-isnote { sm-ae-ti2-e /sm-next get null ne } { false } ifelse {
+      /sm-ae-ti2-n sm-ae-ti2-e /sm-next get def
+      /sm-ae-ti2-a sm-ae-ti2-e /sm-si get sm-ae-ti2-si eq def
+      /sm-ae-ti2-b sm-ae-ti2-n /sm-si get sm-ae-ti2-si eq def
+      sm-ae-ti2-a sm-ae-ti2-b or {
+        /sm-ae-ti2-hs sm-ae-ti2-e /sm-heads get def
+        0 1 sm-ae-ti2-hs length 1 sub { /sm-ae-ti2-hi exch def
+          /sm-ae-ti2-h sm-ae-ti2-hs sm-ae-ti2-hi get def
+          sm-ae-ti2-h /tie get {
+            /sm-ae-ti2-nh null def
+            sm-ae-ti2-n /sm-heads get { dup /pos get sm-ae-ti2-h /pos get eq { /sm-ae-ti2-nh exch def exit } { pop } ifelse } forall
+            sm-ae-ti2-nh null ne {
+              /sm-ae-tp-side
+                sm-ae-ti2-hs length 1 gt { sm-ae-ti2-hi sm-ae-ti2-hs length 2 div ge { 1 } { -1 } ifelse } {
+                  sm-ae-ti2-e /sm-stem get { sm-ae-ti2-e /sm-dir get neg } { sm-ae-ti2-h /pos get 0 ge { 1 } { -1 } ifelse } ifelse
+                } ifelse def
+              /sm-ae-tp-dy sm-ae-tp-side 0.55 mul def
+              /sm-ae-ti2-xa sm-ae-ti2-e /sm-x get sm-ae-ti2-h /dx get sm-ae-ti2-e /sm-hw get 0.75 mul add sm-ae-sp mul add def
+              /sm-ae-ti2-xb sm-ae-ti2-n /sm-x get sm-ae-ti2-nh /dx get sm-ae-ti2-n /sm-hw get 0.75 mul sub sm-ae-sp mul add def
+              sm-ae-ti2-a sm-ae-ti2-b and {
+                sm-ae-ti2-xa sm-ae-ti2-xb sm-ae-ti2-h /pos get sm-ae-tiepiece
+              } {
+                sm-ae-ti2-a {
+                  sm-ae-ti2-xa sm-ae-sysinfo sm-ae-ti2-si get /x1 get 0.4 sm-ae-sp mul sub sm-ae-ti2-h /pos get sm-ae-tiepiece
+                } {
+                  sm-ae-ti2-n /sm-x get sm-ae-ti2-n /sm-left get 2.2 add sm-ae-sp mul sub sm-ae-ti2-xb sm-ae-ti2-nh /pos get sm-ae-tiepiece
+                } ifelse
+              } ifelse
+            } if
+          } if
+        } for
+      } if
+    } if
+  } forall
+} bind def
+/sm-ae-lyriclines { % si s ->
+  /sm-ae-ll-s exch def /sm-ae-ll-si exch def
+  /sm-ae-ll-seq sm-ae-seqs sm-ae-ll-s get def
+  /sm-ae-ll-nv 0 def
+  sm-ae-ll-seq { /lyrics sm-ae-get dup null ne { length sm-ae-ll-nv sm-ae-max /sm-ae-ll-nv exch def } { pop } ifelse } forall
+  0 1 sm-ae-ll-nv 1 sub { /sm-ae-ll-v exch def
+    /sm-ae-ll-sy [ sm-ae-ll-seq { dup /lyrics sm-ae-get dup null ne {
+        dup length sm-ae-ll-v gt { sm-ae-ll-v get dup null ne { /text get length 0 gt } { pop false } ifelse } { pop false } ifelse
+      } { pop false } ifelse not { pop } if } forall ] def
+    0 1 sm-ae-ll-sy length 1 sub { /sm-ae-ll-k exch def
+      /sm-ae-ll-e sm-ae-ll-sy sm-ae-ll-k get def
+      sm-ae-ll-e /sm-si get sm-ae-ll-si eq {
+        /sm-ae-ll-l sm-ae-ll-e /lyrics get sm-ae-ll-v get def
+        /sm-ae-ll-x sm-ae-ll-e /sm-x get def
+        /sm-ae-ll-y sm-ae-ll-si sm-ae-ll-s sm-ae-staffy sm-ae-sysv sm-ae-ll-si get /st get sm-ae-ll-s get /lyricY get sm-ae-ll-v get sm-ae-sp mul add def
+        /sm-ae-ll-nx sm-ae-ll-k 1 add sm-ae-ll-sy length lt { sm-ae-ll-sy sm-ae-ll-k 1 add get } { null } ifelse def
+        /sm-ae-ll-hw sm-ae-ll-l /text get sm-ae-LYR false sm-ae-aw 2 div def
+        sm-ae-ll-l /hyphen sm-ae-is sm-ae-ll-nx null ne and {
+          sm-ae-ll-nx /sm-si get sm-ae-ll-si eq {
+            /sm-ae-ll-g0 sm-ae-ll-x sm-ae-ll-hw add def
+            /sm-ae-ll-g1 sm-ae-ll-nx /sm-x get sm-ae-ll-nx /lyrics get sm-ae-ll-v get /text get sm-ae-LYR false sm-ae-aw 2 div sub def
+            sm-ae-ll-g1 sm-ae-ll-g0 sub 5 gt { sm-ae-ll-g0 sm-ae-ll-g1 sm-ae-ll-y 3 sm-ae-rn sm-lyric-hyphen } if
+          } {
+            sm-ae-ll-x sm-ae-ll-hw add dup 14 add sm-ae-ll-y 3 sm-ae-rn sm-lyric-hyphen
+          } ifelse
+        } if
+        sm-ae-ll-l /extend sm-ae-is {
+          /sm-ae-ll-i1 sm-ae-ll-nx null ne { sm-ae-ll-nx /sm-seqi get } { sm-ae-ll-seq length } ifelse def
+          /sm-ae-ll-last sm-ae-ll-e def
+          sm-ae-ll-e /sm-seqi get 1 add 1 sm-ae-ll-i1 1 sub { sm-ae-ll-seq exch get
+            dup sm-ae-isnote { dup /sm-si get sm-ae-ll-si eq } { false } ifelse { /sm-ae-ll-last exch def } { pop } ifelse } for
+          /sm-ae-ll-xa sm-ae-ll-x sm-ae-ll-hw add 1.5 add def
+          /sm-ae-ll-xb sm-ae-ll-last /sm-x get sm-ae-ll-last /sm-hw sm-ae-get dup null eq { pop sm-ae-HW } if sm-ae-sp mul add def
+          sm-ae-ll-xb sm-ae-ll-xa sub 3 gt { sm-ae-ll-xa sm-ae-ll-xb sm-ae-ll-y 3 sm-ae-rn sm-lyric-extend } if
+        } if
+      } if
+    } for
+  } for
+} bind def
+
+% ---------------------------------------------------------------- page furniture
+/sm-ae-tempo {
+  /sm-ae-tm-t sm-ae-S /tempo get def
+  /sm-ae-tm-b sm-ae-tm-t /beat sm-ae-get def
+  /sm-ae-tm-v 0 def /sm-ae-tm-d 0 def
+  sm-ae-tm-b null ne {
+    [ [1 1] 1 0 [1 2] 2 0 [1 4] 4 0 [1 8] 8 0 [1 16] 16 0 [3 4] 2 1 [3 8] 4 1 [3 16] 8 1 ]
+    0 3 21 { 2 copy get sm-ae-tm-b sm-ae-fcmp 0 eq sm-ae-tm-v 0 eq and {
+        2 copy 1 add get /sm-ae-tm-v exch def 2 copy 2 add get /sm-ae-tm-d exch def } if pop } for pop
+  } if
+  sm-ae-sysinfo 0 get /x0 get 0 0 sm-ae-staffy sm-ae-sysv 0 get /st get 0 get /tempoY get sm-ae-sp mul add 2 sm-ae-rn
+  sm-ae-tm-t /text sm-ae-get dup null eq { pop () } if 11 sm-ae-txt
+  sm-ae-tm-v sm-ae-tm-d
+  sm-ae-tm-t /bpm sm-ae-get dup null ne sm-ae-tm-v 0 ne and { sm-ae-cvs ( = ) exch sm-ae-cat } { pop () } ifelse
+  sm-tempo
+} bind def
+/sm-ae-furniture { % page ->
+  /sm-ae-fu-p exch def
+  sm-ae-fu-p sm-ae-wpage eq {
+    /sm-ae-fu-y sm-ae-wy def
+    sm-ae-words { /sm-ae-fu-w exch def
+      /sm-ae-fu-y sm-ae-fu-y 14 sub def
+      false sm-ae-fu-w { 32 gt or } forall {
+        sm-ae-left 40 add sm-ae-fu-y 2 sm-ae-rn sm-ae-fu-w 11 sm-ae-txt /Times-Roman 11 sm-text-l
+      } if
+    } forall
+  } if
+  sm-ae-NPAGES 1 gt {
+    sm-ae-PW 2 div sm-ae-o-bottom 18 sub 2 sm-ae-rn sm-ae-fu-p 1 add sm-ae-cvs /Times-Roman 9 sm-text-c
+  } if
+  sm-ae-fu-p sm-ae-NPAGES 1 sub eq sm-ae-footer length 0 gt and {
+    gsave 0.35 setgray sm-ae-PW 2 div sm-ae-o-bottom 30 sub 2 sm-ae-rn sm-ae-footer 7.5 sm-ae-txt /Helvetica 7.5 sm-text-c grestore
+  } if
+  sm-ae-fu-p 0 eq sm-ae-S /tempo sm-ae-get null ne and sm-ae-NSYS 0 gt and { sm-ae-tempo } if
+} bind def
+/sm-ae-deffooter { % meta -> (footer)
+  /sm-ae-df-m exch def
+  /sm-ae-df-out () def
+  [ sm-ae-df-m /source sm-ae-get dup null eq { pop () } if dup length 0 gt { (Source: ) exch sm-ae-cat } if
+    sm-ae-df-m /transcriber sm-ae-get dup null eq { pop () } if dup length 0 gt { (Transcription: ) exch sm-ae-cat } if
+    sm-ae-df-m /rights sm-ae-get dup null eq { pop () } if ] {
+    dup length 0 gt { sm-ae-df-out length 0 gt { /sm-ae-df-out sm-ae-df-out (  \302\267  ) sm-ae-cat def } if
+      /sm-ae-df-out sm-ae-df-out 3 -1 roll sm-ae-cat def } { pop } ifelse
+  } forall
+  sm-ae-df-out
+} bind def
+
+/sm-ae-run { % score options ->
+  /sm-ae-O exch def /sm-ae-S exch def
+  /sm-ae-oget { sm-ae-O exch sm-ae-get dup null eq { pop } { exch pop } ifelse } bind def   % default key -> v
+  /sm-ae-paper /letter /paper sm-ae-oget def
+  sm-ae-paper type /arraytype ne { /sm-ae-paper sm-ae-papers sm-ae-paper dup type /stringtype eq { cvn } if sm-ae-get dup null eq { pop [612 792] } if def } if
+  /sm-ae-PW sm-ae-paper 0 get def /sm-ae-PH sm-ae-paper 1 get def
+  /sm-ae-sp 5.5 /sp sm-ae-oget /staff-space sm-ae-oget def
+  /sm-sp sm-ae-sp def
+  /sm-ae-o-margin 50 /margin sm-ae-oget def
+  /sm-ae-o-top 46 /top sm-ae-oget def
+  /sm-ae-o-bottom 44 /bottom sm-ae-oget def
+  /sm-ae-breaks (source) /breaks sm-ae-oget dup type /nametype eq { 20 string cvs } if def
+  /sm-ae-footer sm-ae-O /footer sm-ae-get dup null eq { pop sm-ae-S /meta get sm-ae-deffooter } if def
+  /sm-ae-MS sm-ae-S /measures get def
+  /sm-ae-NM sm-ae-MS length def
+  /sm-ae-NS sm-ae-S /staves get length def
+  /sm-ae-left sm-ae-o-margin def
+  /sm-ae-right sm-ae-PW sm-ae-o-margin sub def
+  sm-ae-NM 0 eq {
+    /sm-ae-ti-draw true def sm-ae-title pop showpage
+  } {
+    sm-ae-phase-state
+    sm-ae-phase-geom
+    sm-ae-phase-cols
+    /sm-ae-indent 0 def
+    sm-ae-NS 1 gt {
+      false sm-ae-S /staves get { /name sm-ae-get dup null eq { pop () } if length 0 gt or } forall {
+        0 sm-ae-S /staves get { /name sm-ae-get dup null eq { pop () } if 10 false sm-ae-aw sm-ae-max } forall sm-ae-sp div 1.5 add /sm-ae-indent exch def
+      } if
+    } if
+    /sm-ae-avail sm-ae-right sm-ae-left sub sm-ae-sp div def
+    /sm-ae-avail0 sm-ae-avail sm-ae-indent sub def
+    sm-ae-phase-breaks
+    sm-ae-phase-place
+    sm-ae-phase-beams
+    sm-ae-phase-vert
+    sm-ae-phase-pages
+    sm-ae-phase-seq
+    0 1 sm-ae-NPAGES 1 sub { /sm-ae-pp exch def
+      sm-ae-pp 0 eq { /sm-ae-ti-draw true def sm-ae-title pop } if
+      0 1 sm-ae-NSYS 1 sub { dup sm-ae-pageof exch get sm-ae-pp eq { sm-ae-drawsystem } { pop } ifelse } for
+      sm-ae-pp sm-ae-furniture
+      showpage
+    } for
+  } ifelse
+} bind def
+
+end % sm-ae-dict
+
+% ---------------------------------------------------------------- public procedures
+/sm-abc-engrave { % score [options] ->
+  dup type /dicttype eq { dup /measures known { 0 dict } if } { 0 dict } ifelse
+  sm-ae-dict begin sm-ae-run end
+} bind def
+% file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF)
+/sm-abc-readsrc {
+  sm-ae-dict begin
+  /sm-ae-rd-mk exch def /sm-ae-rd-f exch def
+  /sm-ae-rd-buf 65535 string def
+  mark
+  { sm-ae-rd-f sm-ae-rd-buf readline exch
+    dup sm-ae-rd-mk eq { pop pop exit } if
+    dup length string copy exch not { exit } if (\n) } loop
+  0 counttomark 1 sub -1 1 { index length add } for string
+  /sm-ae-rd-out exch def
+  /sm-ae-rd-n 0 def
+  counttomark -1 1 { -1 roll dup sm-ae-rd-out exch sm-ae-rd-n exch putinterval length sm-ae-rd-n add /sm-ae-rd-n exch def } for
+  pop sm-ae-rd-out
+  end
+} bind def
+% abc-text [options] -> : parse with lib/sm_abc_parse.ps and engrave
+/sm-abc-engrave-string {
+  dup type /dicttype eq { } { 0 dict } ifelse
+  /sm-abc-parse where { pop } { (sm-abc-engrave: lib/sm_abc_parse.ps is not loaded) print flush /sm-abc-parse /undefined signalerror } ifelse
+  dup /tune known { dup /tune get } { 0 } ifelse 3 -1 roll sm-abc-parse
+  % the parser may give a Score, a list of Scores or << /scores [...] >>
+  dup type /dicttype eq { dup /scores known { /scores get } if } if
+  dup type /arraytype eq { exch get } { exch pop } ifelse
+  exch sm-abc-engrave
+} bind def
+% (path) [options] -> : read an ABC file and engrave it
+/sm-abc-engrave-file {
+  dup type /dicttype eq { } { 0 dict } ifelse exch
+  (r) file dup null sm-abc-readsrc exch closefile
+  exch sm-abc-engrave-string
+} bind def

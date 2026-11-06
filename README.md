@@ -61,6 +61,32 @@ const { ps, pages, size, warnings } = toPostScript(abcText, { lib, paper: 'a4' }
 // then: pscat --pdf out.pdf file.ps, or createRenderer().render(ps, { pdf: true })
 ```
 
+### The PostScript engraver (`--engine ps`)
+
+`node bin/sheet.mjs song.abc --engine ps -o song.ps` writes a **self-contained
+PostScript file**: the glyph library, [`lib/sm_abc.ps`](lib/sm_abc.ps) (layout
+in PostScript), a short driver and the ABC source itself, verbatim after
+`currentfile`. pscat lays the music out and draws it; no JavaScript is involved
+in the page. `-o song.pdf` / `.png` / `.svg` render it with the pscat CLI,
+`--engine ps-wasm` with the WebAssembly build (byte-identical PDFs; every drawn
+position is rounded to two decimals with `sm-r2`, and the layout uses no
+transcendental operators). Until `lib/sm_abc_parse.ps` exists the driver
+engraves the Score that the JS parser wrote into the file (`psLiteral`); once
+`sm-abc-parse` is defined it parses the embedded ABC instead.
+
+From PostScript, by hand: `score sm-abc-engrave`, or `score << /paper /a4
+/staff-space 6 /breaks (auto) >> sm-abc-engrave`; with the parser loaded,
+`(song.abc) sm-abc-engrave-file`. See the header of `lib/sm_abc.ps`.
+
+It covers the title block, tempo, clefs, key and time signatures (also
+mid-line changes), proportional spacing, line and page breaks, stems, flags,
+beams, chords, accidentals, ledger lines, dots, rests, multi-measure rests, bar
+lines, repeats, voltas, chord symbols, lyrics with hyphens and extenders, ties,
+several staves with a brace or bracket, and the footer. Slurs, tuplets, grace
+notes, decorations, dynamics, hairpins and `%%annotation` marks are still JS
+only. Transposition, playback/MIDI, share links and the editor's live preview
+stay on the JS engraver, which remains the reference.
+
 ## The editor
 
 [`site/editor.html`](site/editor.html) is built into one HTML file

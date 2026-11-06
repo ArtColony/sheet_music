@@ -34,5 +34,19 @@
       "ode-to-joy.abc": "97beff3dfc2bf6054113510ab9c09a5e5f832bfa8071d204eb2d6e4ad5290448",
       "twinkle.abc": "78345a1821357dd6963f2c7da37f4304eea0e0bd00766103b24e8e34ac325097"
     }
+  },
+  "psEngine": {
+    "ps": {
+      "amazing-grace.abc": "9ad2551af6349caa725bc61ec77d932fb4586c21fe90b81b4e8be4c70cc242e9",
+      "ode-to-joy.abc": "ebc376b2363b0bf7ba6d819aebd3ec13a3bb8d7a1ab619abc632eb2c19e22d02",
+      "twinkle.abc": "b580133db6fba6866768f4d8b81eeff60096fd70cf10d39f5c4260ed56941062"
+    },
+    "pdf": {
+      "darwin-arm64": {
+        "amazing-grace.abc": "e747da7feeed3c297ce9e9f93c90bd8820d791643de9c0c5e5889420fb1558a3",
+        "ode-to-joy.abc": "97beff3dfc2bf6054113510ab9c09a5e5f832bfa8071d204eb2d6e4ad5290448",
+        "twinkle.abc": "ac90f7aeb4cfef7beb7b6d0fa2d813058f3c33d3aa52c15866803c332710346e"
+      }
+    }
   }
 }
