@@ -1,0 +1,14 @@
+{
+  "name": "artcolony",
+  "description": "ArtColony plugins for Claude Code.",
+  "owner": { "name": "ArtColony", "url": "https://github.com/ArtColony" },
+  "allowCrossMarketplaceDependenciesOn": ["pscat"],
+  "plugins": [
+    {
+      "name": "sheet-music",
+      "source": "./plugin",
+      "description": "Music notation in PostScript: write ABC, engrave it to PDF, PNG or SVG with pscat, transpose it, and draw custom notation with the sm- glyph library. Runs headless; needs the pscat plugin.",
+      "category": "design"
+    }
+  ]
+}

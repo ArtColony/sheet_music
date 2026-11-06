@@ -1,0 +1,20 @@
+{
+  "name": "artcolony",
+  "interface": {
+    "displayName": "ArtColony"
+  },
+  "plugins": [
+    {
+      "name": "sheet-music",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Design"
+    }
+  ]
+}

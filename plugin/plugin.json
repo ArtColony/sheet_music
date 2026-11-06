@@ -1,0 +1,33 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "sheet-music",
+  "version": "0.1.0",
+  "description": "Music notation in PostScript: write ABC, engrave it to PDF, PNG or SVG with pscat, transpose it, and draw custom notation with the sm- glyph library. Runs headless; needs the pscat plugin.",
+  "author": {
+    "name": "ArtColony",
+    "url": "https://github.com/ArtColony"
+  },
+  "homepage": "https://artcolony.github.io/sheet_music/",
+  "repository": "https://github.com/ArtColony/sheet_music",
+  "license": "MIT",
+  "keywords": [
+    "music",
+    "sheet-music",
+    "abc",
+    "notation",
+    "postscript",
+    "pscat"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Sheet music",
+        "shortDescription": "Write tunes as ABC and engrave them to PDF in PostScript with pscat.",
+        "developerName": "ArtColony",
+        "category": "Design",
+        "websiteURL": "https://artcolony.github.io/sheet_music/",
+        "defaultPrompt": "Write Twinkle, Twinkle, Little Star as ABC and engrave it to a PDF with the sheet-music library."
+      }
+    }
+  }
+}

@@ -1,0 +1,648 @@
+%!PS
+% sm_engrave.ps -- procedural music glyphs and engraving primitives.
+%
+% Part of ArtColony/sheet_music (MIT). Every glyph is drawn from PostScript
+% paths: no music font is needed, so the same program renders identically in
+% the pscat command-line tool and in its WebAssembly build.
+%
+% Conventions
+%   * Callers pass positions in points (page space). Glyphs are drawn in
+%     staff-space units: one unit = the distance between two staff lines,
+%     /sm-sp points (set it before drawing; default 5.5).
+%   * A glyph's origin is its musical reference point: the centre of a
+%     notehead, the G line for the treble clef, the F line for the bass clef,
+%     the centre line of a staff, and so on. See docs/engraving.md.
+%   * Every name this file defines starts with sm- (pscat has no locals).
+%   * Line widths below are in staff spaces.
+
+/sm-sp where { pop } { /sm-sp 5.5 def } ifelse
+/sm-ink where { pop } { /sm-ink { 0 setgray } def } ifelse
+
+% ---------------------------------------------------------------- helpers
+/sm-mtx matrix def
+% x y sm-at -  : gsave, move origin to (x,y) and scale to staff spaces
+/sm-at { gsave translate sm-sp dup scale sm-ink } bind def
+% x y r sm-disc -  : filled circle
+/sm-disc { 0 360 arc closepath fill } bind def
+% cx cy a b angle sm-ellipse -  : append an ellipse to the current path
+/sm-ellipse {
+  sm-mtx currentmatrix pop
+  5 -2 roll translate rotate scale
+  1 0 moveto 0 0 1 0 360 arc closepath
+  sm-mtx setmatrix
+} bind def
+% Broad-nib stroke: the path is stroked under a squashed, rotated matrix,
+% so the pen is an ellipse and curves come out thick-and-thin.
+% w angle squash sm-nib -  : stroke the current path with that pen
+/sm-nib {
+  sm-mtx currentmatrix pop
+  exch rotate 1 exch scale
+  % line width is interpreted in the squashed space
+  setlinewidth 1 setlinecap 1 setlinejoin stroke
+  sm-mtx setmatrix
+} bind def
+
+% Variable-width stroke: a smooth centreline (uniform Catmull-Rom spline)
+% through knots, each with its own width, filled as one outline with round
+% ends. Where the stroke crosses itself the nonzero fill keeps it solid.
+% [x0 y0 w0 x1 y1 w1 ...] sm-ribbon -   (units of the current space)
+/sm-rb-n 12 def
+/sm-rb-pt { 0 max sm-rb-m 1 sub min 3 mul sm-rb-k exch 2 getinterval aload pop } bind def
+/sm-rb-w { 0 max sm-rb-m 1 sub min 3 mul 2 add sm-rb-k exch get } bind def
+/sm-ribbon {
+  /sm-rb-k exch def
+  /sm-rb-m sm-rb-k length 3 idiv def
+  /sm-rb-l sm-rb-m 1 sub sm-rb-n mul 1 add 2 mul array def
+  /sm-rb-r sm-rb-l length array def
+  /sm-rb-c 0 def
+  0 1 sm-rb-m 2 sub { /sm-rb-i exch def
+    sm-rb-i sm-rb-pt /sm-rb-y0 exch def /sm-rb-x0 exch def
+    sm-rb-i 1 add sm-rb-pt /sm-rb-y3 exch def /sm-rb-x3 exch def
+    sm-rb-i 1 sub sm-rb-pt /sm-rb-ym exch def /sm-rb-xm exch def
+    sm-rb-i 2 add sm-rb-pt /sm-rb-yp exch def /sm-rb-xp exch def
+    /sm-rb-x1 sm-rb-x3 sm-rb-xm sub 6 div sm-rb-x0 add def
+    /sm-rb-y1 sm-rb-y3 sm-rb-ym sub 6 div sm-rb-y0 add def
+    /sm-rb-x2 sm-rb-x3 sm-rb-xp sm-rb-x0 sub 6 div sub def
+    /sm-rb-y2 sm-rb-y3 sm-rb-yp sm-rb-y0 sub 6 div sub def
+    /sm-rb-wa sm-rb-i sm-rb-w def /sm-rb-wb sm-rb-i 1 add sm-rb-w def
+    0 1 sm-rb-i sm-rb-m 2 sub eq { sm-rb-n } { sm-rb-n 1 sub } ifelse {
+      sm-rb-n div /sm-rb-t exch def /sm-rb-u 1 sm-rb-t sub def
+      /sm-rb-b0 sm-rb-u dup dup mul mul def
+      /sm-rb-b1 sm-rb-u dup mul sm-rb-t mul 3 mul def
+      /sm-rb-b2 sm-rb-t dup mul sm-rb-u mul 3 mul def
+      /sm-rb-b3 sm-rb-t dup dup mul mul def
+      /sm-rb-px sm-rb-x0 sm-rb-b0 mul sm-rb-x1 sm-rb-b1 mul add sm-rb-x2 sm-rb-b2 mul add sm-rb-x3 sm-rb-b3 mul add def
+      /sm-rb-py sm-rb-y0 sm-rb-b0 mul sm-rb-y1 sm-rb-b1 mul add sm-rb-y2 sm-rb-b2 mul add sm-rb-y3 sm-rb-b3 mul add def
+      /sm-rb-d0 sm-rb-u dup mul def
+      /sm-rb-d1 sm-rb-u sm-rb-t mul 2 mul def
+      /sm-rb-d2 sm-rb-t dup mul def
+      /sm-rb-dx sm-rb-x1 sm-rb-x0 sub sm-rb-d0 mul sm-rb-x2 sm-rb-x1 sub sm-rb-d1 mul add sm-rb-x3 sm-rb-x2 sub sm-rb-d2 mul add def
+      /sm-rb-dy sm-rb-y1 sm-rb-y0 sub sm-rb-d0 mul sm-rb-y2 sm-rb-y1 sub sm-rb-d1 mul add sm-rb-y3 sm-rb-y2 sub sm-rb-d2 mul add def
+      % half the width (smoothstep between the knots) over |derivative|
+      sm-rb-wb sm-rb-wa sub 3 sm-rb-t 2 mul sub mul sm-rb-t dup mul mul sm-rb-wa add 2 div
+      sm-rb-dx dup mul sm-rb-dy dup mul add sqrt div /sm-rb-h exch def
+      sm-rb-l sm-rb-c sm-rb-px sm-rb-dy sm-rb-h mul sub put
+      sm-rb-l sm-rb-c 1 add sm-rb-py sm-rb-dx sm-rb-h mul add put
+      sm-rb-r sm-rb-c sm-rb-px sm-rb-dy sm-rb-h mul add put
+      sm-rb-r sm-rb-c 1 add sm-rb-py sm-rb-dx sm-rb-h mul sub put
+      /sm-rb-c sm-rb-c 2 add def
+    } for
+  } for
+  newpath sm-rb-l 0 get sm-rb-l 1 get moveto
+  2 2 sm-rb-c 2 sub { dup sm-rb-l exch get exch 1 add sm-rb-l exch get lineto } for
+  sm-rb-c 2 sub -2 0 { dup sm-rb-r exch get exch 1 add sm-rb-r exch get lineto } for
+  closepath fill
+  0 sm-rb-pt 0 sm-rb-w 2 div sm-disc
+  sm-rb-m 1 sub sm-rb-pt sm-rb-m 1 sub sm-rb-w 2 div sm-disc
+} bind def
+
+% ---------------------------------------------------------------- staff
+% x y w sm-staff - : five lines, y is the centre line, w in points
+/sm-staff {
+  gsave sm-ink
+  0.11 sm-sp mul setlinewidth 0 setlinecap
+  -2 1 2 { % x y w k
+    3 index exch sm-sp mul 3 index add moveto dup 0 rlineto
+  } for
+  stroke pop pop pop grestore
+} bind def
+% x1 x2 y sm-ledger - : one ledger line at height y (points)
+/sm-ledger {
+  gsave sm-ink 0.17 sm-sp mul setlinewidth 0 setlinecap
+  dup 3 index exch moveto lineto pop stroke grestore
+} bind def
+% Thin barline from y1 to y2 at x.  x y1 y2 sm-bar-thin
+/sm-bar-thin {
+  gsave sm-ink 0.16 sm-sp mul setlinewidth 0 setlinecap
+  2 index exch moveto lineto stroke grestore
+} bind def
+/sm-bar-thick {
+  gsave sm-ink 0.5 sm-sp mul setlinewidth 0 setlinecap
+  2 index exch moveto lineto stroke grestore
+} bind def
+% x y sm-repeat-dots - : the two dots of a repeat sign, y = staff centre
+/sm-repeat-dots {
+  sm-at 0 0.5 0.2 sm-disc 0 -0.5 0.2 sm-disc grestore
+} bind def
+
+% ---------------------------------------------------------------- noteheads
+% Head metrics shared with the layout code (src/metrics.js):
+%   black / half: half-width 0.59, whole: half-width 0.82
+/sm-head-black {
+  sm-at newpath 0 0 0.635 0.44 20 sm-ellipse fill grestore
+} bind def
+/sm-head-half {
+  sm-at newpath 0 0 0.635 0.44 20 sm-ellipse
+  0 0 0.44 0.15 28 sm-ellipse eofill grestore
+} bind def
+/sm-head-whole {
+  sm-at newpath 0 0 0.82 0.5 0 sm-ellipse
+  0 0 0.36 0.27 -55 sm-ellipse eofill grestore
+} bind def
+/sm-head-breve {
+  sm-at newpath 0 0 0.82 0.5 0 sm-ellipse
+  0 0 0.36 0.27 -55 sm-ellipse eofill
+  0.12 setlinewidth -0.98 -0.6 moveto 0 1.2 rlineto 0.98 -0.6 moveto 0 1.2 rlineto
+  stroke grestore
+} bind def
+% Small x for percussion / unpitched: x y sm-head-x
+/sm-head-x {
+  sm-at 0.16 setlinewidth 1 setlinecap
+  -0.45 -0.42 moveto 0.45 0.42 lineto -0.45 0.42 moveto 0.45 -0.42 lineto stroke grestore
+} bind def
+% augmentation dot: x y sm-dot
+/sm-dot { sm-at 0 0 0.2 sm-disc grestore } bind def
+
+% ---------------------------------------------------------------- stems, flags, beams
+% x y1 y2 sm-stem - (points)
+/sm-stem {
+  gsave sm-ink 0.12 sm-sp mul setlinewidth 0 setlinecap
+  2 index exch moveto lineto stroke grestore
+} bind def
+% One flag, stem up, attached at the stem tip (origin), hanging down.
+/sm-flag-up-path {
+  0 0 moveto
+  0.08 -0.75 1.05 -1.05 0.98 -2.35 curveto
+  0.96 -2.65 0.88 -2.9 0.8 -3.05 curveto
+  0.98 -2.25 0.62 -1.45 0 -1.05 curveto closepath
+} bind def
+% x y n up sm-flags - : n flags at the stem tip (x,y). up is a boolean.
+/sm-flags {
+  4 2 roll sm-at
+  { } { 1 -1 scale } ifelse
+  % n on stack
+  0 1 3 -1 roll 1 sub {
+    gsave 0 exch -0.78 mul translate
+    newpath sm-flag-up-path fill grestore
+  } for
+  grestore
+} bind def
+% x1 y1 x2 y2 dir sm-beam - : beam between stem tips; dir is +1 when the
+% stems go up (beam grows downward from the tip line), -1 when they go down.
+/sm-beam {
+  gsave sm-ink
+  0.48 sm-sp mul mul neg /sm-bt exch def
+  /sm-by2 exch def /sm-bx2 exch def /sm-by1 exch def /sm-bx1 exch def
+  newpath sm-bx1 sm-by1 moveto sm-bx2 sm-by2 lineto
+  sm-bx2 sm-by2 sm-bt add lineto sm-bx1 sm-by1 sm-bt add lineto
+  closepath fill
+  grestore
+} bind def
+
+% ---------------------------------------------------------------- rests
+% x y sm-rest-whole : y = staff centre; hangs from the line above the centre
+/sm-rest-whole { sm-at -0.62 0.5 1.24 0.5 rectfill grestore } bind def
+/sm-rest-half  { sm-at -0.62 0.0 1.24 0.5 rectfill grestore } bind def
+/sm-rest-quarter {
+  sm-at newpath
+  -0.22 1.48 moveto 0.38 0.66 lineto
+  -0.18 0.02 lineto 0.36 -0.6 lineto
+  0.5 40 0.3 sm-nib
+  newpath 0.36 -0.6 moveto
+  -0.15 -0.62 -0.38 -0.95 0.02 -1.42 curveto
+  0.2 32 0.5 sm-nib
+  grestore
+} bind def
+% one rest "hook": a dot and a curved arm out to the right
+/sm-rest-hook {
+  newpath -0.26 0.0 0.25 sm-disc
+  newpath -0.48 0.0 moveto
+  -0.3 -0.4 0.2 -0.32 0.42 0.12 curveto
+  0.13 setlinewidth 1 setlinecap stroke
+} bind def
+% x y n sm-rest-flagged : n = 1 (eighth), 2 (16th), 3 (32nd); y = staff centre
+/sm-rest-flagged {
+  /sm-rn exch def sm-at
+  0 1 sm-rn 1 sub {
+    gsave dup -0.333 mul exch neg 0.5 add translate sm-rest-hook grestore
+  } for
+  0.13 setlinewidth 1 setlinecap
+  0.42 0.62 moveto
+  /sm-ry -1.0 sm-rn 1 sub sub def
+  0.42 sm-ry 0.62 sub 0.333 mul add sm-ry lineto stroke
+  grestore
+} bind def
+
+% ---------------------------------------------------------------- accidentals
+% origin = centre of the note's line/space; drawn to the left by the caller
+/sm-acc-sharp {
+  sm-at
+  0.13 setlinewidth 0 setlinecap
+  -0.22 -1.35 moveto -0.22 1.2 lineto 0.22 -1.2 moveto 0.22 1.35 lineto stroke
+  newpath -0.56 0.18 moveto 0.56 0.52 lineto 0.56 0.82 lineto -0.56 0.48 lineto closepath fill
+  newpath -0.56 -0.62 moveto 0.56 -0.28 lineto 0.56 0.02 lineto -0.56 -0.32 lineto closepath fill
+  grestore
+} bind def
+/sm-acc-flat {
+  sm-at
+  0.13 setlinewidth 0 setlinecap -0.32 -0.55 moveto -0.32 1.85 lineto stroke
+  newpath -0.32 -0.55 moveto
+  0.3 -0.1 0.78 0.35 0.45 0.65 curveto
+  0.15 0.88 -0.15 0.58 -0.32 0.38 curveto
+  -0.32 0.16 lineto
+  -0.1 0.46 0.12 0.56 0.22 0.43 curveto
+  0.36 0.22 0.05 -0.15 -0.32 -0.37 curveto
+  closepath fill
+  grestore
+} bind def
+/sm-acc-natural {
+  sm-at
+  0.13 setlinewidth 0 setlinecap
+  -0.26 -0.6 moveto -0.26 1.4 lineto 0.26 -1.4 moveto 0.26 0.6 lineto stroke
+  newpath -0.26 0.2 moveto 0.26 0.38 lineto 0.26 0.65 lineto -0.26 0.47 lineto closepath fill
+  newpath -0.26 -0.6 moveto 0.26 -0.42 lineto 0.26 -0.15 lineto -0.26 -0.33 lineto closepath fill
+  grestore
+} bind def
+/sm-acc-dsharp {
+  sm-at 0.2 setlinewidth 1 setlinecap
+  -0.38 -0.38 moveto 0.38 0.38 lineto -0.38 0.38 moveto 0.38 -0.38 lineto stroke
+  -0.36 -0.36 0.16 sm-disc 0.36 0.36 0.16 sm-disc -0.36 0.36 0.16 sm-disc 0.36 -0.36 0.16 sm-disc
+  grestore
+} bind def
+/sm-acc-dflat {
+  2 copy exch 0.42 sm-sp mul sub exch sm-acc-flat
+  exch 0.42 sm-sp mul add exch sm-acc-flat
+} bind def
+
+% ---------------------------------------------------------------- clefs
+% Treble clef: origin = left edge at the G line (second line from bottom).
+% One variable-width stroke (sm-ribbon), as a pen would draw it: from the
+% teardrop inside the bowl, round the G line, up the heavy swash to the top
+% loop, then down the spine to the hook and its ball. Each knot is x y width.
+/sm-clef-treble-knots [
+  1.74 0.18 0.43
+  1.7 0.76 0.24
+  1.16 1.03 0.21
+  0.52 0.78 0.35
+  0.12 0.12 0.48
+  0.2 -0.58 0.43
+  0.68 -1.0 0.31
+  1.32 -1.12 0.19
+  2.02 -0.9 0.33
+  2.52 -0.25 0.54
+  2.52 0.6 0.6
+  2.02 1.32 0.58
+  1.38 1.9 0.52
+  0.92 2.55 0.39
+  0.82 3.38 0.25
+  1.05 4.1 0.18
+  1.48 4.45 0.17
+  1.84 4.18 0.19
+  1.86 3.55 0.24
+  1.64 2.75 0.28
+  1.47 1.8 0.31
+  1.37 0.6 0.31
+  1.32 -0.6 0.31
+  1.29 -1.65 0.3
+  1.17 -2.35 0.26
+  0.84 -2.63 0.22
+  0.5 -2.5 0.19
+] def
+/sm-clef-treble {
+  sm-at sm-clef-treble-knots sm-ribbon
+  0.62 -2.12 0.4 sm-disc
+  grestore
+} bind def
+% Treble clef with a small 8 below (tenor voice / guitar).
+/sm-clef-treble8 {
+  2 copy sm-clef-treble
+  sm-at /Times-Bold findfont 1.6 scalefont setfont
+  (8) stringwidth pop 2 div 1.2 exch sub -3.75 moveto (8) show grestore
+} bind def
+% Bass clef: origin = left edge at the F line (second line from top).
+/sm-clef-bass {
+  sm-at newpath
+  0.32 -0.02 0.36 sm-disc
+  newpath 0.0 0.05 moveto
+  0.05 0.8 0.7 1.12 1.15 1.12 curveto
+  1.85 1.12 2.28 0.62 2.28 -0.08 curveto
+  2.28 -1.28 1.15 -2.08 0.08 -2.55 curveto
+  0.06 -2.42 lineto
+  0.95 -1.88 1.62 -1.05 1.62 -0.06 curveto
+  1.62 0.62 1.35 0.98 0.98 0.98 curveto
+  0.62 0.98 0.38 0.75 0.32 0.4 curveto
+  closepath fill
+  2.68 0.5 0.18 sm-disc 2.68 -0.5 0.18 sm-disc
+  grestore
+} bind def
+% Alto (C) clef: origin = left edge at the C line (the centre line).
+/sm-clef-alto {
+  sm-at
+  0 -2 0.48 4 rectfill 0.68 -2 0.16 4 rectfill
+  gsave newpath 0.84 0 moveto 1.25 0.55 lineto 1.25 0 lineto closepath fill grestore
+  % upper and lower bowls
+  [1 -1] {
+    gsave 1 exch scale
+    newpath 0.9 0.22 moveto
+    1.3 0.62 1.6 0.95 1.9 0.95 curveto
+    2.35 0.95 2.5 1.45 2.32 1.75 curveto
+    2.15 2.02 1.72 2.06 1.45 1.86 curveto
+    0.34 30 0.45 sm-nib
+    1.6 1.6 0.33 sm-disc
+    grestore
+  } forall
+  grestore
+} bind def
+
+% ---------------------------------------------------------------- time signatures
+/sm-tsfont { /NewCenturySchlbk-Bold findfont 2.9 scalefont setfont } bind def
+% x y (str) sm-ts-digits : one row of digits centred at x, baseline-centred at y
+% (y is the centre of the row: the row spans y-1 .. y+1)
+/sm-ts-digits {
+  3 1 roll sm-at sm-tsfont
+  dup stringwidth pop 2 div neg -1.0 moveto show
+  grestore
+} bind def
+% x y (num) (den) sm-timesig : y = staff centre
+/sm-timesig {
+  /sm-tsd exch def /sm-tsn exch def /sm-tsy exch def /sm-tsx exch def
+  sm-tsx sm-tsy sm-sp add sm-tsn sm-ts-digits
+  sm-tsx sm-tsy sm-sp sub sm-tsd sm-ts-digits
+} bind def
+% Common time and cut time: x y sm-ts-common / sm-ts-cut (y = staff centre)
+/sm-ts-c-path {
+  0.68 0.5 moveto
+  0.55 0.92 0.25 1.0 0.0 1.0 curveto
+  -0.55 1.0 -0.82 0.5 -0.82 0.0 curveto
+  -0.82 -0.55 -0.5 -1.0 0.05 -1.0 curveto
+  0.4 -1.0 0.62 -0.8 0.75 -0.5 curveto
+} bind def
+/sm-ts-common {
+  sm-at newpath sm-ts-c-path 0.52 0 0.5 sm-nib
+  0.5 0.5 0.26 sm-disc grestore
+} bind def
+/sm-ts-cut {
+  2 copy sm-ts-common
+  sm-at 0.16 setlinewidth 0 setlinecap -0.05 -1.55 moveto -0.05 1.55 lineto stroke grestore
+} bind def
+
+% ---------------------------------------------------------------- curves
+% Tie / slur: a filled crescent between two points (points), bulging by h
+% points (positive = above, negative = below).
+% x1 y1 x2 y2 h sm-tie -
+/sm-tie {
+  gsave sm-ink
+  /sm-th exch def /sm-ty2 exch def /sm-tx2 exch def /sm-ty1 exch def /sm-tx1 exch def
+  /sm-tdx sm-tx2 sm-tx1 sub def /sm-tdy sm-ty2 sm-ty1 sub def
+  /sm-tk 0.17 sm-sp mul sm-th 0 lt { neg } if def
+  newpath sm-tx1 sm-ty1 moveto
+  sm-tx1 sm-tdx 0.25 mul add sm-ty1 sm-tdy 0.25 mul add sm-th 1.33 mul add
+  sm-tx1 sm-tdx 0.75 mul add sm-ty1 sm-tdy 0.75 mul add sm-th 1.33 mul add
+  sm-tx2 sm-ty2 curveto
+  sm-tx1 sm-tdx 0.75 mul add sm-ty1 sm-tdy 0.75 mul add sm-th sm-tk sub 1.33 mul add
+  sm-tx1 sm-tdx 0.25 mul add sm-ty1 sm-tdy 0.25 mul add sm-th sm-tk sub 1.33 mul add
+  sm-tx1 sm-ty1 curveto closepath fill
+  grestore
+} bind def
+
+% ---------------------------------------------------------------- articulations
+% x y sm-art-staccato etc. (y = where the mark's centre goes)
+/sm-art-staccato { sm-at 0 0 0.2 sm-disc grestore } bind def
+/sm-art-tenuto { sm-at -0.6 -0.08 1.2 0.16 rectfill grestore } bind def
+/sm-art-accent {
+  sm-at 0.15 setlinewidth 0 setlinejoin 1 setlinecap
+  -0.7 0.4 moveto 0.7 0 lineto -0.7 -0.4 lineto stroke grestore
+} bind def
+/sm-art-marcato {
+  sm-at newpath -0.55 -0.5 moveto 0 0.6 lineto 0.55 -0.5 lineto 0.32 -0.5 lineto 0 0.15 lineto -0.3 -0.5 lineto closepath fill grestore
+} bind def
+% x y up sm-art-fermata : up = true for above the staff
+/sm-art-fermata {
+  3 1 roll sm-at { } { 1 -1 scale } ifelse
+  newpath -1.2 0 moveto -1.2 1.55 1.2 1.55 1.2 0 curveto
+  1.08 0 lineto 1.08 1.25 -1.08 1.25 -1.08 0 curveto closepath fill
+  0 0.3 0.22 sm-disc grestore
+} bind def
+/sm-art-trill {
+  sm-at /Times-BoldItalic findfont 2.2 scalefont setfont
+  (tr) stringwidth pop 2 div neg -0.5 moveto (tr) show grestore
+} bind def
+% roll / turn-like arc
+/sm-art-roll {
+  sm-at newpath -0.9 -0.15 moveto -0.4 0.55 0.4 0.55 0.9 -0.15 curveto
+  0.18 0 0.5 sm-nib grestore
+} bind def
+/sm-art-upbow {
+  sm-at 0.14 setlinewidth 0 setlinejoin -0.5 0.8 moveto 0 -0.5 lineto 0.5 0.8 lineto stroke grestore
+} bind def
+/sm-art-downbow {
+  sm-at 0 0 moveto -0.6 0 moveto -0.6 0.9 lineto 0.6 0.9 lineto 0.6 0 lineto
+  0.13 setlinewidth stroke -0.6 0.68 1.2 0.32 rectfill grestore
+} bind def
+/sm-art-segno {
+  sm-at /Times-Bold findfont 2.2 scalefont setfont (S) stringwidth pop 2 div neg -0.75 moveto (S) show
+  0.14 setlinewidth -0.85 -0.9 moveto 0.85 1.0 lineto stroke
+  -0.6 0.05 0.16 sm-disc 0.6 -0.05 0.16 sm-disc grestore
+} bind def
+/sm-art-coda {
+  sm-at 0.14 setlinewidth newpath 0 0 0.7 0 360 arc stroke
+  -1.1 0 moveto 1.1 0 lineto 0 -1.1 moveto 0 1.1 lineto stroke grestore
+} bind def
+/sm-art-breath {
+  sm-at /Times-Bold findfont 2.4 scalefont setfont 0 0 moveto (,) show grestore
+} bind def
+
+% ---------------------------------------------------------------- text
+% Fonts: only the PostScript standard 35, which every pscat build has.
+% Text t is a string, or an array of strings and accented-letter triples
+% [(base) (accent) raise] -- raise in points. pscat cannot re-encode a font
+% (a definefont copy falls back to Helvetica: docs/FRICTION.md #1) and has no
+% glyphshow, so accented letters are composed from StandardEncoding's accent
+% glyphs (\302 acute, \310 dieresis, ...) over the base letter.
+/sm-compose {
+  /sm-cr exch def /sm-ca exch def /sm-cb exch def
+  currentpoint /sm-cy exch def /sm-cx exch def
+  sm-cb show
+  sm-cx sm-cb stringwidth pop sm-ca stringwidth pop sub 2 div add sm-cy sm-cr add moveto sm-ca show
+  sm-cx sm-cb stringwidth pop add sm-cy moveto
+} bind def
+/sm-tw {
+  dup type /stringtype eq { stringwidth pop } {
+    0 exch { dup type /stringtype eq { stringwidth pop } { 0 get stringwidth pop } ifelse add } forall
+  } ifelse
+} bind def
+/sm-show {
+  dup type /stringtype eq { show } {
+    { dup type /stringtype eq { show } { aload pop sm-compose } ifelse } forall
+  } ifelse
+} bind def
+% x y t font size sm-text-l / -c / -r : left, centred, right aligned at x
+/sm-setf { exch findfont exch scalefont setfont } bind def
+/sm-text-l { gsave sm-ink sm-setf 3 1 roll moveto sm-show grestore } bind def
+/sm-text-c { gsave sm-ink sm-setf 3 1 roll moveto dup sm-tw 2 div neg 0 rmoveto sm-show grestore } bind def
+/sm-text-r { gsave sm-ink sm-setf 3 1 roll moveto dup sm-tw neg 0 rmoveto sm-show grestore } bind def
+% Lyric syllable centred under the notehead.  x y (s) sm-lyric
+/sm-lyric-font where { pop } { /sm-lyric-font /Times-Roman def } ifelse
+/sm-lyric-size where { pop } { /sm-lyric-size 10.5 def } ifelse
+/sm-lyric { sm-lyric-font sm-lyric-size sm-text-c } bind def
+% Hyphen between syllables: x1 x2 y sm-lyric-hyphen (x1/x2 = centres of the
+% two syllables; the hyphen sits in the gap between them)
+/sm-lyric-hyphen {
+  gsave sm-ink 0.6 setlinewidth
+  /sm-hy exch def 2 copy add 2 div /sm-hx exch def pop pop
+  sm-hx 2 sub sm-hy 3 add moveto 4 0 rlineto stroke grestore
+} bind def
+% Melisma extender line: x1 x2 y sm-lyric-extend
+/sm-lyric-extend {
+  gsave sm-ink 0.6 setlinewidth dup 3 index exch moveto lineto pop stroke grestore
+} bind def
+
+% ---------------------------------------------------------------- brackets
+% x ytop ybot sm-brace : curly brace whose right edge is at x
+/sm-brace {
+  gsave sm-ink
+  /sm-by2 exch def /sm-by1 exch def /sm-bx exch def
+  sm-bx sm-by1 sm-by2 add 2 div translate
+  sm-by1 sm-by2 sub 2 div dup 0.16 mul exch scale % width ~ height
+  % unit brace: x from -1 to 0, y from -1 to 1 (in a 0.16-wide box)
+  newpath
+  0 1 moveto
+  -0.9 0.86 -0.05 0.25 -0.85 0 curveto
+  -0.05 -0.25 -0.9 -0.86 0 -1 curveto
+  -1.35 -0.86 -0.35 -0.2 -1.05 0 curveto
+  -0.35 0.2 -1.35 0.86 0 1 curveto
+  closepath fill
+  grestore
+} bind def
+% x ytop ybot sm-bracket : square bracket with hooks, left of x
+/sm-bracket {
+  gsave sm-ink
+  /sm-by2 exch def /sm-by1 exch def /sm-bx exch def
+  sm-bx 0.8 sm-sp mul sub sm-by2 0.55 sm-sp mul sm-by1 sm-by2 sub rectfill
+  0.18 sm-sp mul setlinewidth
+  sm-bx 0.8 sm-sp mul sub sm-by1 moveto
+  sm-bx 0.2 sm-sp mul add sm-by1 sm-bx 0.6 sm-sp mul add sm-by1 0.3 sm-sp mul add
+  sm-bx 0.9 sm-sp mul add sm-by1 0.9 sm-sp mul add curveto stroke
+  sm-bx 0.8 sm-sp mul sub sm-by2 moveto
+  sm-bx 0.2 sm-sp mul add sm-by2 sm-bx 0.6 sm-sp mul add sm-by2 0.3 sm-sp mul sub
+  sm-bx 0.9 sm-sp mul add sm-by2 0.9 sm-sp mul sub curveto stroke
+  grestore
+} bind def
+% Volta (ending) bracket: x1 x2 y (label) closed sm-volta
+% closed = true draws the right-hand drop.
+/sm-volta {
+  gsave sm-ink
+  /sm-vc exch def /sm-vl exch def /sm-vy exch def /sm-vx2 exch def /sm-vx1 exch def
+  0.7 setlinewidth 0 setlinecap 0 setlinejoin
+  sm-vx1 sm-vy 2.2 sm-sp mul sub moveto sm-vx1 sm-vy lineto sm-vx2 sm-vy lineto
+  sm-vc { sm-vx2 sm-vy 2.2 sm-sp mul sub lineto } if stroke
+  sm-vx1 0.6 sm-sp mul add sm-vy 1.75 sm-sp mul sub sm-vl /Times-Bold 2.0 sm-sp mul sm-text-l
+  grestore
+} bind def
+% Tuplet number (with optional bracket):
+% x1 x2 y (n) bracket? up? sm-tuplet  -- y is the bracket line
+/sm-tuplet {
+  gsave sm-ink
+  /sm-tu exch def /sm-tb exch def /sm-tn exch def /sm-ty exch def /sm-tx2 exch def /sm-tx1 exch def
+  /sm-tm sm-tx1 sm-tx2 add 2 div def
+  /Times-BoldItalic findfont 1.9 sm-sp mul scalefont setfont
+  /sm-tuw sm-tn stringwidth pop def
+  sm-tb {
+    0.6 setlinewidth
+    /sm-th 0.7 sm-sp mul sm-tu { neg } if def
+    sm-tx1 sm-ty sm-th add moveto sm-tx1 sm-ty lineto sm-tm sm-tuw 2 div sub 1.5 sub sm-ty lineto stroke
+    sm-tm sm-tuw 2 div add 1.5 add sm-ty moveto sm-tx2 sm-ty lineto sm-tx2 sm-ty sm-th add lineto stroke
+  } if
+  sm-tm sm-tuw 2 div sub sm-ty 0.65 sm-sp mul sub moveto sm-tn show
+  grestore
+} bind def
+% Multi-measure rest: x1 x2 y (count) sm-mmrest   (y = staff centre)
+/sm-mmrest {
+  gsave sm-ink
+  /sm-mn exch def /sm-my exch def /sm-mx2 exch def /sm-mx1 exch def
+  sm-mx1 sm-my 0.45 sm-sp mul sub sm-mx2 sm-mx1 sub 0.9 sm-sp mul rectfill
+  0.16 sm-sp mul setlinewidth
+  sm-mx1 sm-my 1 sm-sp mul sub moveto 0 2 sm-sp mul rlineto
+  sm-mx2 sm-my 1 sm-sp mul sub moveto 0 2 sm-sp mul rlineto stroke
+  sm-mx1 sm-mx2 add 2 div sm-my 3.1 sm-sp mul add sm-mn sm-ts-digits
+  grestore
+} bind def
+
+% ---------------------------------------------------------------- chord symbols, tempo
+% Chord symbol: x y (root) acc (kind) (bass) bacc sm-chordsym
+% acc/bacc: 1 sharp, -1 flat, 0 none. (bass) empty for no slash bass.
+/sm-chord-font where { pop } { /sm-chord-font /Times-Roman def } ifelse
+/sm-chord-size where { pop } { /sm-chord-size 11 def } ifelse
+/sm-chacc { % acc -> draws a small accidental at the current point, advancing
+  dup 0 eq { pop } {
+    currentpoint /sm-chy exch def /sm-chx exch def
+    1 dict begin /sm-sp sm-chord-size 0.17 mul def
+    dup 1 eq { sm-chx sm-sp 0.65 mul add sm-chy sm-chord-size 0.62 mul add sm-acc-sharp }
+             { sm-chx sm-sp 0.4 mul add sm-chy sm-chord-size 0.48 mul add sm-acc-flat } ifelse
+    pop sm-chx sm-sp 1.25 mul add sm-chy end moveto
+  } ifelse
+} bind def
+/sm-chordsym {
+  /sm-chba exch def /sm-chb exch def /sm-chk exch def /sm-cha exch def /sm-chr exch def
+  gsave sm-ink moveto sm-chord-font sm-chord-size sm-setf
+  sm-chr show sm-cha sm-chacc
+  sm-chk length 0 gt { sm-chk sm-show } if
+  sm-chb length 0 gt { (/) show sm-chb show sm-chba sm-chacc } if
+  grestore
+} bind def
+% Tempo mark: x y (text) value dots (= 120) sm-tempo  -- value: 1 whole,
+% 2 half, 4 quarter, 8 eighth, 16 sixteenth; 0 for text only
+/sm-tempo {
+  /sm-tps exch def /sm-tpd exch def /sm-tpv exch def /sm-tpt exch def
+  gsave sm-ink moveto /Times-Bold 11 sm-setf
+  sm-tpt sm-show
+  sm-tpv 0 gt {
+    sm-tpt length 0 gt { ( ) show } if
+    currentpoint /sm-tpy exch def /sm-tpx exch def
+    1 dict begin /sm-sp 3.6 def
+    /sm-tphx sm-tpx sm-sp 0.7 mul add def /sm-tphy sm-tpy sm-sp 0.45 mul add def
+    sm-tpv 1 eq { sm-tphx sm-tphy sm-head-whole } {
+      sm-tpv 2 eq { sm-tphx sm-tphy sm-head-half } { sm-tphx sm-tphy sm-head-black } ifelse
+      sm-tphx sm-sp 0.55 mul add sm-tphy sm-sp 0.2 mul add sm-tphy sm-sp 3.3 mul add sm-stem
+      sm-tpv 8 ge { sm-tphx sm-sp 0.49 mul add sm-tphy sm-sp 3.3 mul add sm-tpv 8 eq { 1 } { 2 } ifelse true sm-flags } if
+    } ifelse
+    sm-tpd 0 gt { sm-tphx sm-sp 1.3 mul add sm-tphy sm-dot } if
+    sm-tpx sm-sp 1.6 mul add sm-tpd 0 gt { sm-sp 0.9 mul add } if sm-tpy end moveto
+    /Times-Roman 11 sm-setf sm-tps show
+  } if
+  grestore
+} bind def
+% Mordents: x y sm-art-mordent (with the vertical stroke: lower mordent)
+/sm-mordent-path {
+  -1.0 -0.1 moveto -0.6 0.45 lineto -0.2 -0.15 lineto 0.2 0.45 lineto 0.6 -0.15 lineto 1.0 0.4 lineto
+} bind def
+/sm-art-uppermordent { sm-at newpath sm-mordent-path 0.26 30 0.45 sm-nib grestore } bind def
+/sm-art-lowermordent {
+  2 copy sm-art-uppermordent
+  sm-at 0.12 setlinewidth 0 -0.6 moveto 0 0.85 lineto stroke grestore
+} bind def
+% Hairpin: x1 x2 y open-at-right? sm-hairpin  (cresc: true; dim: false)
+/sm-hairpin {
+  gsave sm-ink 0.6 setlinewidth 1 setlinejoin
+  /sm-hc exch def /sm-hy exch def /sm-hx2 exch def /sm-hx1 exch def
+  /sm-hh 0.75 sm-sp mul def
+  sm-hc { sm-hx2 sm-hy sm-hh add moveto sm-hx1 sm-hy lineto sm-hx2 sm-hy sm-hh sub lineto }
+        { sm-hx1 sm-hy sm-hh add moveto sm-hx2 sm-hy lineto sm-hx1 sm-hy sm-hh sub lineto } ifelse
+  stroke grestore
+} bind def
+% Dynamics: x y (mf) sm-dynamic  -- left edge at x, baseline at y
+/sm-dynamic { /Times-BoldItalic 12.5 sm-text-l } bind def
+% Slashed grace-note stroke: x y sm-grace-slash (centre of the slash)
+/sm-grace-slash {
+  sm-at 0.12 setlinewidth 1 setlinecap -0.75 -0.6 moveto 0.75 0.6 lineto stroke grestore
+} bind def
+
+% ---------------------------------------------------------------- annotations
+% Reader's marks added in the editor (%%annotation lines in the source).
+% Positions in points; colours as r g b.
+% x y t r g b sm-annot-text   -- an italic note, baseline at y
+/sm-annot-text {
+  gsave setrgbcolor /Helvetica-Oblique 10 sm-setf 3 1 roll moveto sm-show grestore
+} bind def
+% x y w h r g b sm-annot-circle   -- an ellipse drawn inside the box
+/sm-annot-circle {
+  gsave setrgbcolor
+  /sm-ah exch def /sm-aw exch def /sm-ay exch def /sm-ax exch def
+  sm-mtx currentmatrix pop
+  sm-ax sm-aw 2 div add sm-ay sm-ah 2 div add translate
+  sm-aw 2 div sm-ah 2 div 0.01 max scale
+  newpath 1 0 moveto 0 0 1 0 360 arc closepath
+  sm-mtx setmatrix 1.3 setlinewidth stroke grestore
+} bind def
+% x y w h r g b sm-annot-highlight   -- a pale box, drawn under the music
+/sm-annot-highlight { gsave setrgbcolor rectfill grestore } bind def

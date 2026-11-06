@@ -30,6 +30,52 @@ ABC / MusicXML ──parse──▶ score model ──layout──▶ PostScript
   every ABC sample against `src/abc.js`.
 - **No dependencies.** Plain ES modules, Node 22+, and the pinned pscat release.
 
+## Install the plugin (Claude Code, ChatGPT / Codex)
+
+The **sheet-music** plugin gives an agent the PostScript library and a skill
+for writing tunes as ABC and engraving them with pscat, headless: no Node
+and no checkout of this repo. It **depends on the [pscat plugin](https://github.com/PSCatLabs/pscat)**,
+which provides the interpreter and its MCP tools.
+
+**Claude Code.** Add pscat's marketplace first, then this one, then install.
+pscat comes in automatically as a dependency:
+
+```sh
+claude plugin marketplace add PSCatLabs/pscat
+claude plugin marketplace add ArtColony/sheet_music
+claude plugin install sheet-music@artcolony      # also installs pscat@pscat
+```
+
+In a session, the same steps are `/plugin marketplace add PSCatLabs/pscat`,
+`/plugin marketplace add ArtColony/sheet_music` and `/plugin install sheet-music@artcolony`.
+If pscat's marketplace was not added first, the install still succeeds, but
+`claude plugin list` shows sheet-music as *failed to load: Dependency
+"pscat@pscat" is not installed*. Add the marketplace and run
+`claude plugin install pscat@pscat`.
+
+**ChatGPT / Codex.** Plugins there cannot declare dependencies, so install
+pscat yourself, before sheet-music:
+
+```sh
+codex plugin marketplace add PSCatLabs/pscat
+codex plugin marketplace add ArtColony/sheet_music
+codex plugin add pscat@pscat
+codex plugin add sheet-music@artcolony
+```
+
+Or, after adding the two marketplaces, run `/plugins` in Codex (or open
+**Plugins** in the ChatGPT desktop app) and install **pscat**, then
+**Sheet music**. Start a new session afterwards. The skill checks for pscat
+first and says how to install it if it is missing.
+
+**Updating:** `claude plugin marketplace update artcolony` or
+`codex plugin marketplace upgrade artcolony`.
+
+The plugin lives in [`plugin/`](plugin/), with marketplaces in
+[`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) and
+[`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json).
+See [AGENTS.md](AGENTS.md) for how it is built and tested.
+
 ## Quick start
 
 ```sh

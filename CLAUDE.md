@@ -9,3 +9,4 @@ ABC / MusicXML → PostScript → PDF, engraved deterministically and rendered b
 - Samples must be public domain music transcribed here (CC0); add provenance to `samples/SOURCES.md` and the file to `samples/order.json`, then update the goldens.
 - When pscat misbehaves or something is missing, add a row to `docs/FRICTION.md` with a minimal repro, draft the issue in `docs/issues/NN-slug.md`, search existing PSCatLabs/pscat issues, and file it with `gh issue create -R PSCatLabs/pscat` (link the URL back in the table).
 - `npm run build` writes the Pages site to `dist/`; `.github/workflows/pages.yml` deploys it from `main`.
+- `plugin/` is the Claude Code + ChatGPT/Codex plugin (see `AGENTS.md`). `lib/` stays the source: after changing `lib/*.ps` or the version, run `node scripts/build-plugin.mjs` (`tests/plugin.test.mjs` fails while it is stale).

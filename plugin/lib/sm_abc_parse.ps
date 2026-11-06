@@ -1,0 +1,1270 @@
+%!PS
+% sm_abc_parse.ps -- ABC notation -> Score dict, entirely in PostScript.
+%
+% Part of ArtColony/sheet_music (MIT). A port of src/abc.js + the ABC half
+% of src/score.js finalizeScore: the dict it builds is the same structure as
+% psLiteral(parse(src).scores[0]) from src/index.js (see the Score model in
+% the header of src/score.js). tests/ps-parse.test.mjs checks that, sample by
+% sample, against the JS parser.
+%
+% Public entry points
+%   (abc text) sm-abc-parse          -> Score        first tune (X: block)
+%   (abc text) sm-abc-parse-all      -> [Score ...]  every tune in the text
+%   (path.abc) sm-abc-parse-file     -> Score        read a file, first tune
+%   (path.abc) sm-abc-parse-file-all -> [Score ...]
+%   sm-abc-warnings                  -> [(text) ...] what the last parse
+%                                       skipped or could not read, as in
+%                                       parseABC's warnings ("tune 1: ...")
+%   any sm-abc-json                  -  print a value as canonical JSON
+%                                       (dict keys sorted) on stdout
+%   (abc text) tune sm-abc-annotations -> [<< /page /type /x /y /w /h /rgb
+%                                       /text >> ...]  the %%annotation marks of
+%                                       tune (0-based), as lib/sm_abc.ps's
+%                                       options /annotations take them
+%
+% Score values: strings are PS strings (UTF-8 bytes), Fracs are [num den]
+% integer arrays reduced by gcd, JS null is null, booleans are booleans.
+%
+% Example (headless, from the repository root):
+%   pscat -e '(lib/sm_abc_parse.ps) run
+%     (samples/twinkle.abc) sm-abc-parse-file /meta get /title get ='
+%   prints: Twinkle, Twinkle, Little Star
+% A file that engraves needs both halves: run this file, then the layout
+% (lib/sm_abc.ps), and pass the Score from sm-abc-parse to it.
+%
+% Coverage: everything src/abc.js parses -- header fields, keys with modes
+% and clefs, meters, unit lengths, tempo, notes, rests (z x Z X), chords,
+% broken rhythm, tuplets, ties, slurs, grace notes, decorations, dynamics,
+% hairpins, chord symbols, annotations, bar lines, repeats, endings, inline
+% fields, lyrics (w:), several voices (V:), %%score/%%staves grouping and
+% several tunes. Voice overlay (&) is skipped with a warning, as in the JS.
+%
+% Conventions: every name starts with sm-; internals are sm-abcp-* and live
+% in the private dict sm-abcp-dict, which the entry points begin/end. None
+% of the procedures recurse except the JSON printer, which keeps its state
+% on the operand stack. Nothing here reads the clock or a random source.
+
+% Everything is defined in userdict, so the file can be run from inside
+% another dict and still be found once that dict is ended.
+userdict begin
+
+/sm-abcp-dict 600 dict def
+sm-abcp-dict begin
+
+% ================================================================ strings
+% s i sm-abcp-ch c   : byte at i, or -1 past the end
+/sm-abcp-ch { 2 copy exch length lt { get } { pop pop -1 } ifelse } bind def
+/sm-abcp-isdig { dup 48 ge exch 57 le and } bind def
+/sm-abcp-isspc { dup 32 eq 1 index 9 eq or 1 index 10 eq or 1 index 13 eq or 1 index 12 eq or exch 11 eq or } bind def
+/sm-abcp-isup { dup 65 ge exch 90 le and } bind def
+/sm-abcp-islow { dup 97 ge exch 122 le and } bind def
+/sm-abcp-isalpha { dup sm-abcp-isup exch sm-abcp-islow or } bind def
+/sm-abcp-isword { dup sm-abcp-isalpha 1 index sm-abcp-isdig or exch 95 eq or } bind def
+% s i sm-abcp-tail s'  : from i to the end
+/sm-abcp-tail { 1 index length 1 index sub dup 0 lt { pop pop pop () } { getinterval } ifelse } bind def
+% s i j sm-abcp-sub s' : [i, j)
+/sm-abcp-sub { 1 index sub getinterval } bind def
+/sm-abcp-copy { dup length string copy } bind def
+% a b sm-abcp-cat ab  (a new string)
+/sm-abcp-cat {
+  1 index length 1 index length add string
+  dup 0 4 index putinterval dup 3 index length 3 index putinterval
+  3 1 roll pop pop
+} bind def
+/sm-abcp-pre { anchorsearch { pop pop true } { pop false } ifelse } bind def
+/sm-abcp-has { search { pop pop pop true } { pop false } ifelse } bind def
+% s c i sm-abcp-idx j : first index >= i holding byte c, or -1
+/sm-abcp-idx {
+  { 2 index 1 index sm-abcp-ch dup -1 eq { pop pop pop pop -1 exit } if
+    2 index eq { exch pop exch pop exit } if 1 add } loop
+} bind def
+% s i sm-abcp-digits j : end of the digit run starting at i
+/sm-abcp-digits { { 2 copy sm-abcp-ch sm-abcp-isdig { 1 add } { exit } ifelse } loop exch pop } bind def
+% s i c sm-abcp-run j : end of the run of byte c starting at i
+/sm-abcp-run { 3 1 roll { 2 copy sm-abcp-ch 3 index eq { 1 add } { exit } ifelse } loop exch pop exch pop } bind def
+% s i sm-abcp-spaces j : end of the whitespace run starting at i
+/sm-abcp-spaces { { 2 copy sm-abcp-ch sm-abcp-isspc { 1 add } { exit } ifelse } loop exch pop } bind def
+/sm-abcp-rtrim { { dup length 0 eq { exit } if dup dup length 1 sub get sm-abcp-isspc { 0 1 index length 1 sub getinterval } { exit } ifelse } loop } bind def
+/sm-abcp-ltrim { { dup length 0 eq { exit } if dup 0 get sm-abcp-isspc { 1 sm-abcp-tail } { exit } ifelse } loop } bind def
+/sm-abcp-trim { sm-abcp-ltrim sm-abcp-rtrim } bind def
+/sm-abcp-blank { sm-abcp-trim length 0 eq } bind def
+/sm-abcp-lower {
+  sm-abcp-copy 0 1 2 index length 1 sub {
+    1 index 1 index get dup sm-abcp-isup { 32 add 2 index 3 1 roll put } { pop pop } ifelse
+  } for
+} bind def
+/sm-abcp-int { sm-abcp-sub cvi } bind def
+/sm-abcp-itoa { 24 string cvs sm-abcp-copy } bind def
+/sm-abcp-chr { 1 string dup 0 4 -1 roll put } bind def
+
+% string builders: << /s string /n count >>
+/sm-abcp-sbnew { << /s 256 string /n 0 >> } bind def
+/sm-abcp-sbroom { % sb k -> sb
+  { 1 index /n get 1 index add 2 index /s get length le { exit } if
+    1 index /s get dup length 2 mul string dup 0 4 -1 roll putinterval 2 index /s 3 -1 roll put } loop pop
+} bind def
+/sm-abcp-sbputs { % sb str -> -
+  exch 1 index length sm-abcp-sbroom
+  dup /s get 1 index /n get 3 index putinterval
+  dup /n get 3 -1 roll length add /n exch put
+} bind def
+/sm-abcp-sbputc { % sb c -> -
+  exch 1 sm-abcp-sbroom
+  dup /s get 1 index /n get 4 -1 roll put
+  dup /n get 1 add /n exch put
+} bind def
+/sm-abcp-sbstr { dup /s get 0 3 -1 roll /n get getinterval sm-abcp-copy } bind def
+/sm-abcp-sbclear { /n 0 put } bind def
+
+% growable lists: << /a array /n count >>
+/sm-abcp-lnew { << /a 8 array /n 0 >> } bind def
+/sm-abcp-lpush { % list item -> -
+  exch dup /n get 1 index /a get length ge {
+    dup /a get dup length 2 mul array dup 0 4 -1 roll putinterval 1 index /a 3 -1 roll put } if
+  dup /a get 1 index /n get 4 -1 roll put
+  dup /n get 1 add /n exch put
+} bind def
+/sm-abcp-larr { dup /a get 0 3 -1 roll /n get getinterval } bind def
+/sm-abcp-lget { exch /a get exch get } bind def
+/sm-abcp-llast { dup /n get 1 sub sm-abcp-lget } bind def
+% s sm-abcp-words [words]  (split on whitespace)
+/sm-abcp-words {
+  /sm-abcp-wds exch def /sm-abcp-wdl sm-abcp-lnew def /sm-abcp-wdi 0 def
+  { /sm-abcp-wdi sm-abcp-wds sm-abcp-wdi sm-abcp-spaces def
+    sm-abcp-wdi sm-abcp-wds length ge { exit } if
+    /sm-abcp-wdj sm-abcp-wdi def
+    { sm-abcp-wds sm-abcp-wdj sm-abcp-ch dup -1 eq exch sm-abcp-isspc or { exit } if /sm-abcp-wdj sm-abcp-wdj 1 add def } loop
+    sm-abcp-wdl sm-abcp-wds sm-abcp-wdi sm-abcp-wdj sm-abcp-sub sm-abcp-lpush
+    /sm-abcp-wdi sm-abcp-wdj def } loop
+  sm-abcp-wdl sm-abcp-larr
+} bind def
+% [words] sm-abcp-join s  (joined with single spaces)
+/sm-abcp-join {
+  () exch { exch dup length 0 gt { ( ) sm-abcp-cat } if exch sm-abcp-cat } forall
+} bind def
+
+% ================================================================ fractions
+/sm-abcp-gcd { abs exch abs exch { dup 0 eq { pop exit } if dup 3 1 roll mod } loop dup 0 eq { pop 1 } if } bind def
+% n d sm-abcp-F [n d]  reduced, d > 0
+/sm-abcp-F {
+  dup 0 lt { neg exch neg exch } if
+  2 copy sm-abcp-gcd dup 3 1 roll idiv 3 1 roll idiv exch 2 array astore
+} bind def
+/sm-abcp-fmul { /sm-abcp-fb exch def /sm-abcp-fa exch def
+  sm-abcp-fa 0 get sm-abcp-fb 0 get mul sm-abcp-fa 1 get sm-abcp-fb 1 get mul sm-abcp-F } bind def
+/sm-abcp-fadd { /sm-abcp-fb exch def /sm-abcp-fa exch def
+  sm-abcp-fa 0 get sm-abcp-fb 1 get mul sm-abcp-fb 0 get sm-abcp-fa 1 get mul add
+  sm-abcp-fa 1 get sm-abcp-fb 1 get mul sm-abcp-F } bind def
+/sm-abcp-fsub { /sm-abcp-fb exch def /sm-abcp-fa exch def
+  sm-abcp-fa 0 get sm-abcp-fb 1 get mul sm-abcp-fb 0 get sm-abcp-fa 1 get mul sub
+  sm-abcp-fa 1 get sm-abcp-fb 1 get mul sm-abcp-F } bind def
+% a b sm-abcp-fcmp int  (sign of a - b)
+/sm-abcp-fcmp { /sm-abcp-fb exch def /sm-abcp-fa exch def
+  sm-abcp-fa 0 get sm-abcp-fb 1 get mul sm-abcp-fb 0 get sm-abcp-fa 1 get mul sub } bind def
+
+% ================================================================ tables
+/sm-abcp-major << /C 0 /G 1 /D 2 /A 3 /E 4 /B 5 /F# 6 /C# 7 /F -1 /Bb -2 /Eb -3 /Ab -4
+  /Db -5 /Gb -6 /Cb -7 /G# 8 /D# 9 /A# 10 /Fb -8 >> def
+/sm-abcp-mode << /maj 0 /ion 0 /min -3 /m -3 /aeo -3 /mix -1 /dor -2 /phr -4 /lyd 1 /loc -5 >> def
+/sm-abcp-clefs <<
+  (treble) [(G) 2 0] (g) [(G) 2 0] (g2) [(G) 2 0]
+  (treble-8) [(G) 2 -1] (treble8) [(G) 2 -1] (tenor-8) [(G) 2 -1] (g2-8) [(G) 2 -1] (treble_8) [(G) 2 -1]
+  (bass) [(F) 4 0] (f) [(F) 4 0] (f4) [(F) 4 0]
+  (alto) [(C) 3 0] (c) [(C) 3 0] (c3) [(C) 3 0]
+  (tenor) [(C) 4 0] (c4) [(C) 4 0]
+>> def
+/sm-abcp-shortdeco << 46 (staccato) 126 (roll) 72 (fermata) 76 (accent) 77 (lowermordent)
+  79 (coda) 80 (uppermordent) 83 (segno) 84 (trill) 117 (upbow) 118 (downbow) >> def
+/sm-abcp-decoalias << (>) (accent) (emphasis) (accent) (^) (marcato) (+) (plus)
+  (<\() (crescendo\() (<\)) (crescendo\)) (>\() (diminuendo\() (>\)) (diminuendo\))
+  (pralltriller) (uppermordent) (mordent) (lowermordent) >> def
+/sm-abcp-dynamics << (pppp) true (ppp) true (pp) true (p) true (mp) true (mf) true (f) true
+  (ff) true (fff) true (ffff) true (sfz) true (sf) true (fp) true (rfz) true (sfp) true >> def
+/sm-abcp-textdecos << (D.C.) (D.C.) (D.S.) (D.S.) (fine) (Fine) (D.C.alfine) (D.C. al Fine)
+  (D.S.alcoda) (D.S. al Coda) (dacapo) (Da Capo) (dacoda) (Coda) >> def
+/sm-abcp-posmap << 94 (above) 95 (below) 60 (left) 62 (right) 64 (above) >> def
+/sm-abcp-tupq << 2 3 3 2 4 3 6 2 8 3 >> def
+% TeX-like accent escapes: the second UTF-8 byte (the first is 16#C3)
+/sm-abcp-mn <<
+  (`a) 16#A0 (`e) 16#A8 (`i) 16#AC (`o) 16#B2 (`u) 16#B9 (`A) 16#80 (`E) 16#88
+  ('a) 16#A1 ('e) 16#A9 ('i) 16#AD ('o) 16#B3 ('u) 16#BA ('y) 16#BD ('A) 16#81 ('E) 16#89
+  (^a) 16#A2 (^e) 16#AA (^i) 16#AE (^o) 16#B4 (^u) 16#BB (^A) 16#82 (^E) 16#8A
+  ("a) 16#A4 ("e) 16#AB ("i) 16#AF ("o) 16#B6 ("u) 16#BC ("y) 16#BF ("A) 16#84 ("O) 16#96 ("U) 16#9C
+  (~n) 16#B1 (~N) 16#91 (~a) 16#A3 (~o) 16#B5
+  (cc) 16#A7 (cC) 16#87
+>> def
+
+% ================================================================ text
+/sm-abcp-tsb sm-abcp-sbnew def
+% s sm-abcp-text s'  : abcText: TeX-like escapes to UTF-8, &amp; to &
+/sm-abcp-text {
+  /sm-abcp-ts exch def
+  sm-abcp-ts (\\) sm-abcp-has sm-abcp-ts (&amp;) sm-abcp-has or not { sm-abcp-ts sm-abcp-copy } {
+    sm-abcp-tsb sm-abcp-sbclear
+    /sm-abcp-ti 0 def
+    { sm-abcp-ti sm-abcp-ts length ge { exit } if
+      /sm-abcp-tc sm-abcp-ts sm-abcp-ti get def
+      { sm-abcp-tc 92 eq {
+          /sm-abcp-t1 sm-abcp-ts sm-abcp-ti 1 add sm-abcp-ch def
+          /sm-abcp-t2 sm-abcp-ts sm-abcp-ti 2 add sm-abcp-ch def
+          sm-abcp-t2 sm-abcp-isalpha {
+            2 string dup 0 sm-abcp-t1 put dup 1 sm-abcp-t2 put
+            dup sm-abcp-mn exch known {
+              sm-abcp-mn exch get sm-abcp-tsb 16#C3 sm-abcp-sbputc sm-abcp-tsb exch sm-abcp-sbputc
+              /sm-abcp-ti sm-abcp-ti 3 add def exit } { pop } ifelse
+          } if
+          /sm-abcp-t3 -1 def
+          sm-abcp-t1 115 eq sm-abcp-t2 115 eq and { /sm-abcp-t3 16#9F def } if
+          sm-abcp-t1 97 eq sm-abcp-t2 97 eq and { /sm-abcp-t3 16#A5 def } if
+          sm-abcp-t1 65 eq sm-abcp-t2 65 eq and { /sm-abcp-t3 16#85 def } if
+          sm-abcp-t3 0 ge { sm-abcp-tsb 16#C3 sm-abcp-sbputc sm-abcp-tsb sm-abcp-t3 sm-abcp-sbputc
+            /sm-abcp-ti sm-abcp-ti 3 add def exit } if
+          sm-abcp-t1 111 eq { /sm-abcp-t3 16#B8 def } if
+          sm-abcp-t1 79 eq { /sm-abcp-t3 16#98 def } if
+          sm-abcp-t3 0 ge { sm-abcp-tsb 16#C3 sm-abcp-sbputc sm-abcp-tsb sm-abcp-t3 sm-abcp-sbputc
+            /sm-abcp-ti sm-abcp-ti 2 add def exit } if
+        } if
+        sm-abcp-tc 38 eq { sm-abcp-ts sm-abcp-ti sm-abcp-tail (&amp;) sm-abcp-pre } { false } ifelse {
+          sm-abcp-tsb 38 sm-abcp-sbputc /sm-abcp-ti sm-abcp-ti 5 add def exit } if
+        sm-abcp-tsb sm-abcp-tc sm-abcp-sbputc /sm-abcp-ti sm-abcp-ti 1 add def exit
+      } loop
+    } loop
+    sm-abcp-tsb sm-abcp-sbstr
+  } ifelse
+} bind def
+
+% ================================================================ warnings
+/sm-abcp-warn { sm-abcp-warnpre exch sm-abcp-cat sm-abcp-warns exch sm-abcp-lpush } bind def
+
+% ================================================================ header values
+% name sm-abcp-clef dict|null
+/sm-abcp-clef {
+  sm-abcp-lower dup (clef=) sm-abcp-pre { 5 sm-abcp-tail } if
+  sm-abcp-clefs 1 index known {
+    sm-abcp-clefs exch get aload pop /sm-abcp-co exch def /sm-abcp-cl exch def /sm-abcp-cs exch def
+    << /sign sm-abcp-cs /line sm-abcp-cl /octave sm-abcp-co >>
+  } { pop null } ifelse
+} bind def
+
+% text sm-abcp-keytext key clef|null   (parseKeyText)
+/sm-abcp-keytext {
+  sm-abcp-trim /sm-abcp-kt exch def /sm-abcp-kclef null def
+  /sm-abcp-kp 0 def
+  { sm-abcp-kp sm-abcp-kt length ge { exit } if
+    sm-abcp-kp 0 eq { true } { sm-abcp-kt sm-abcp-kp 1 sub get sm-abcp-isspc } ifelse {
+      /sm-abcp-kq sm-abcp-kp def
+      sm-abcp-kt sm-abcp-kq sm-abcp-tail sm-abcp-lower (clef=) sm-abcp-pre { /sm-abcp-kq sm-abcp-kq 5 add def } if
+      /sm-abcp-kname null def
+      [(treble-8) (treble) (bass) (alto) (tenor)] { /sm-abcp-kw exch def
+        sm-abcp-kt sm-abcp-kq sm-abcp-tail sm-abcp-lower sm-abcp-kw sm-abcp-pre {
+          sm-abcp-kt sm-abcp-kq sm-abcp-kw length add sm-abcp-ch sm-abcp-isword not {
+            /sm-abcp-kname sm-abcp-kw def exit } if } if } forall
+      sm-abcp-kname null ne {
+        /sm-abcp-kclef sm-abcp-kname sm-abcp-clef def
+        sm-abcp-kt 0 sm-abcp-kp 0 gt { sm-abcp-kp 1 sub } { 0 } ifelse sm-abcp-sub ( ) sm-abcp-cat
+        sm-abcp-kt sm-abcp-kq sm-abcp-kname length add sm-abcp-tail sm-abcp-cat sm-abcp-trim /sm-abcp-kt exch def
+        exit } if
+    } if
+    /sm-abcp-kp sm-abcp-kp 1 add def } loop
+  % drop word=value settings
+  /sm-abcp-ksb sm-abcp-sbnew def /sm-abcp-kp 0 def
+  { sm-abcp-kp sm-abcp-kt length ge { exit } if
+    { sm-abcp-kt sm-abcp-kp get sm-abcp-isword
+      sm-abcp-kp 0 eq { true } { sm-abcp-kt sm-abcp-kp 1 sub get sm-abcp-isword not } ifelse and {
+        /sm-abcp-kq sm-abcp-kp def
+        { sm-abcp-kt sm-abcp-kq sm-abcp-ch sm-abcp-isword { /sm-abcp-kq sm-abcp-kq 1 add def } { exit } ifelse } loop
+        sm-abcp-kt sm-abcp-kq sm-abcp-ch 61 eq {
+          sm-abcp-kt sm-abcp-kq 1 add sm-abcp-ch dup -1 ne exch sm-abcp-isspc not and {
+            /sm-abcp-kq sm-abcp-kq 1 add def
+            { sm-abcp-kt sm-abcp-kq sm-abcp-ch dup -1 eq exch sm-abcp-isspc or { exit } if /sm-abcp-kq sm-abcp-kq 1 add def } loop
+            /sm-abcp-kp sm-abcp-kq def exit } if } if
+      } if
+      sm-abcp-ksb sm-abcp-kt sm-abcp-kp get sm-abcp-sbputc /sm-abcp-kp sm-abcp-kp 1 add def exit
+    } loop } loop
+  /sm-abcp-kt sm-abcp-ksb sm-abcp-sbstr sm-abcp-trim def
+  /sm-abcp-kf 0 def
+  { sm-abcp-kt length 0 eq { exit } if
+    sm-abcp-kt sm-abcp-lower (none) sm-abcp-pre { exit } if
+    sm-abcp-kt (HP) sm-abcp-pre sm-abcp-kt (Hp) sm-abcp-pre or { exit } if
+    sm-abcp-kt 0 get dup 65 ge exch 71 le and not { exit } if
+    /sm-abcp-kq 1 def
+    sm-abcp-kt 1 sm-abcp-ch dup 35 eq exch 98 eq or { /sm-abcp-kq 2 def } if
+    /sm-abcp-ktonic sm-abcp-kt 0 sm-abcp-kq sm-abcp-sub def
+    /sm-abcp-kq sm-abcp-kt sm-abcp-kq sm-abcp-spaces def
+    /sm-abcp-kp sm-abcp-kq def
+    { sm-abcp-kt sm-abcp-kp sm-abcp-ch sm-abcp-isalpha { /sm-abcp-kp sm-abcp-kp 1 add def } { exit } ifelse } loop
+    /sm-abcp-kmode sm-abcp-kt sm-abcp-kq sm-abcp-kp sm-abcp-sub sm-abcp-lower def
+    sm-abcp-kmode length 0 eq { /sm-abcp-kmode (maj) def } {
+      sm-abcp-kmode (m) eq not sm-abcp-kmode length 3 gt and { /sm-abcp-kmode sm-abcp-kmode 0 3 getinterval def } if } ifelse
+    sm-abcp-major sm-abcp-ktonic known { /sm-abcp-kf sm-abcp-major sm-abcp-ktonic get def } if
+    sm-abcp-mode sm-abcp-kmode known { /sm-abcp-kf sm-abcp-kf sm-abcp-mode sm-abcp-kmode get add def } if
+    sm-abcp-kf 7 gt { /sm-abcp-kf sm-abcp-kf 12 sub def } if
+    sm-abcp-kf -7 lt { /sm-abcp-kf sm-abcp-kf 12 add def } if
+    exit } loop
+  << /fifths sm-abcp-kf >> sm-abcp-kclef
+} bind def
+
+% text sm-abcp-meter dict|null   (parseMeter)
+/sm-abcp-meter {
+  sm-abcp-trim /sm-abcp-mt exch def
+  sm-abcp-mt (C) eq { << /num 4 /den 4 /symbol (common) >> } {
+  sm-abcp-mt (C|) eq { << /num 2 /den 2 /symbol (cut) >> } {
+  sm-abcp-mt (none) eq sm-abcp-mt length 0 eq or { << /num 0 /den 0 /symbol (none) >> } {
+    null
+    { /sm-abcp-mp 0 def
+      sm-abcp-mt 0 sm-abcp-ch 40 eq { /sm-abcp-mp 1 def } if
+      /sm-abcp-mq sm-abcp-mp def
+      { sm-abcp-mt sm-abcp-mq sm-abcp-ch dup sm-abcp-isdig exch 43 eq or { /sm-abcp-mq sm-abcp-mq 1 add def } { exit } ifelse } loop
+      sm-abcp-mq sm-abcp-mp gt not { exit } if
+      /sm-abcp-mm1 sm-abcp-mt sm-abcp-mp sm-abcp-mq sm-abcp-sub def
+      /sm-abcp-mr sm-abcp-mq def
+      sm-abcp-mt sm-abcp-mr sm-abcp-ch 41 eq sm-abcp-mt sm-abcp-mr 1 add sm-abcp-ch 47 eq and { /sm-abcp-mr sm-abcp-mr 1 add def } if
+      sm-abcp-mt sm-abcp-mr sm-abcp-ch 47 eq not { exit } if
+      /sm-abcp-mr2 sm-abcp-mt sm-abcp-mr 1 add sm-abcp-digits def
+      sm-abcp-mr2 sm-abcp-mr 1 add gt not { exit } if
+      /sm-abcp-mnum 0 def /sm-abcp-mrest sm-abcp-mm1 def
+      { sm-abcp-mrest (+) search {
+          exch pop dup length 0 gt { cvi } { pop 0 } ifelse sm-abcp-mnum add /sm-abcp-mnum exch def /sm-abcp-mrest exch def }
+        { dup length 0 gt { cvi } { pop 0 } ifelse sm-abcp-mnum add /sm-abcp-mnum exch def exit } ifelse } loop
+      pop << /num sm-abcp-mnum /den sm-abcp-mt sm-abcp-mr 1 add sm-abcp-mr2 sm-abcp-int /text sm-abcp-mm1 sm-abcp-copy >>
+      exit } loop
+  } ifelse } ifelse } ifelse
+} bind def
+
+% s sm-abcp-findfrac n d true | false   : first (\d+)\/(\d+) anywhere
+/sm-abcp-findfrac {
+  /sm-abcp-xs exch def false
+  0 1 sm-abcp-xs length 1 sub { /sm-abcp-xi exch def
+    /sm-abcp-xa sm-abcp-xs sm-abcp-xi sm-abcp-digits def
+    sm-abcp-xa sm-abcp-xi gt { sm-abcp-xs sm-abcp-xa sm-abcp-ch 47 eq } { false } ifelse {
+      /sm-abcp-xb sm-abcp-xs sm-abcp-xa 1 add sm-abcp-digits def
+      sm-abcp-xb sm-abcp-xa 1 add gt {
+        pop sm-abcp-xs sm-abcp-xi sm-abcp-xa sm-abcp-int sm-abcp-xs sm-abcp-xa 1 add sm-abcp-xb sm-abcp-int true exit } if
+    } if
+  } for
+} bind def
+
+/sm-abcp-qsb sm-abcp-sbnew def
+% text sm-abcp-tempo dict|null   (parseTempo)
+/sm-abcp-tempo {
+  /sm-abcp-qs exch def /sm-abcp-qtext () def
+  sm-abcp-qsb sm-abcp-sbclear /sm-abcp-qp 0 def
+  { sm-abcp-qp sm-abcp-qs length ge { exit } if
+    /sm-abcp-qe -1 def
+    sm-abcp-qs sm-abcp-qp get 34 eq { /sm-abcp-qe sm-abcp-qs 34 sm-abcp-qp 1 add sm-abcp-idx def } if
+    sm-abcp-qe 0 ge {
+      sm-abcp-qs sm-abcp-qp 1 add sm-abcp-qe sm-abcp-sub sm-abcp-text
+      sm-abcp-qtext length 0 gt { sm-abcp-qtext ( ) sm-abcp-cat exch sm-abcp-cat } if /sm-abcp-qtext exch def
+      /sm-abcp-qp sm-abcp-qe 1 add def
+    } { sm-abcp-qsb sm-abcp-qs sm-abcp-qp get sm-abcp-sbputc /sm-abcp-qp sm-abcp-qp 1 add def } ifelse
+  } loop
+  /sm-abcp-qr sm-abcp-qsb sm-abcp-sbstr sm-abcp-trim def
+  /sm-abcp-qbeat null def /sm-abcp-qbpm null def
+  0 1 sm-abcp-qr length 1 sub { /sm-abcp-qi exch def
+    { /sm-abcp-qa sm-abcp-qr sm-abcp-qi sm-abcp-digits def
+      sm-abcp-qa sm-abcp-qi gt not { exit } if
+      sm-abcp-qr sm-abcp-qa sm-abcp-ch 47 eq not { exit } if
+      /sm-abcp-qb sm-abcp-qr sm-abcp-qa 1 add sm-abcp-digits def
+      sm-abcp-qb sm-abcp-qa 1 add gt not { exit } if
+      /sm-abcp-qk sm-abcp-qb def
+      { /sm-abcp-qw sm-abcp-qr sm-abcp-qk sm-abcp-spaces def
+        sm-abcp-qw sm-abcp-qk gt not { exit } if
+        /sm-abcp-qd sm-abcp-qr sm-abcp-qw sm-abcp-digits def
+        sm-abcp-qd sm-abcp-qw gt not { exit } if
+        sm-abcp-qr sm-abcp-qd sm-abcp-ch 47 eq not { exit } if
+        /sm-abcp-qd2 sm-abcp-qr sm-abcp-qd 1 add sm-abcp-digits def
+        sm-abcp-qd2 sm-abcp-qd 1 add gt not { exit } if
+        /sm-abcp-qk sm-abcp-qd2 def } loop
+      /sm-abcp-qw sm-abcp-qr sm-abcp-qk sm-abcp-spaces def
+      sm-abcp-qr sm-abcp-qw sm-abcp-ch 61 eq not { exit } if
+      /sm-abcp-qw sm-abcp-qr sm-abcp-qw 1 add sm-abcp-spaces def
+      /sm-abcp-qd sm-abcp-qr sm-abcp-qw sm-abcp-digits def
+      sm-abcp-qd sm-abcp-qw gt not { exit } if
+      /sm-abcp-qbeat sm-abcp-qr sm-abcp-qi sm-abcp-qa sm-abcp-int sm-abcp-qr sm-abcp-qa 1 add sm-abcp-qb sm-abcp-int sm-abcp-F def
+      /sm-abcp-qbpm sm-abcp-qr sm-abcp-qw sm-abcp-qd sm-abcp-int def
+      exit } loop
+    sm-abcp-qbpm null ne { exit } if
+  } for
+  sm-abcp-qbpm null eq sm-abcp-qr length 0 gt and {
+    sm-abcp-qr 0 sm-abcp-digits sm-abcp-qr length eq { /sm-abcp-qbpm sm-abcp-qr cvi def } if } if
+  sm-abcp-qtext length 0 gt sm-abcp-qbpm null ne { sm-abcp-qbpm 0 ne } { false } ifelse or {
+    << /text sm-abcp-qtext /beat sm-abcp-qbeat /bpm sm-abcp-qbpm >> } { null } ifelse
+} bind def
+
+/sm-abcp-vrsb sm-abcp-sbnew def
+% text sm-abcp-vprops dict   (voiceProps: key=value pairs and a bare clef word)
+/sm-abcp-vprops {
+  /sm-abcp-vrs exch def /sm-abcp-vrd 8 dict def
+  sm-abcp-vrsb sm-abcp-sbclear /sm-abcp-vrp 0 def
+  { sm-abcp-vrp sm-abcp-vrs length ge { exit } if
+    { /sm-abcp-vrw sm-abcp-vrp def
+      { sm-abcp-vrs sm-abcp-vrw sm-abcp-ch sm-abcp-isword { /sm-abcp-vrw sm-abcp-vrw 1 add def } { exit } ifelse } loop
+      sm-abcp-vrw sm-abcp-vrp gt {
+        /sm-abcp-vrk sm-abcp-vrs sm-abcp-vrw sm-abcp-spaces def
+        sm-abcp-vrs sm-abcp-vrk sm-abcp-ch 61 eq {
+          /sm-abcp-vrk sm-abcp-vrs sm-abcp-vrk 1 add sm-abcp-spaces def
+          /sm-abcp-vre -1 def
+          sm-abcp-vrs sm-abcp-vrk sm-abcp-ch 34 eq { /sm-abcp-vre sm-abcp-vrs 34 sm-abcp-vrk 1 add sm-abcp-idx def } if
+          sm-abcp-vre 0 ge {
+            /sm-abcp-vrv sm-abcp-vrs sm-abcp-vrk 1 add sm-abcp-vre sm-abcp-sub def /sm-abcp-vre sm-abcp-vre 1 add def
+          } {
+            /sm-abcp-vre sm-abcp-vrk def
+            { sm-abcp-vrs sm-abcp-vre sm-abcp-ch dup -1 eq exch sm-abcp-isspc or { exit } if /sm-abcp-vre sm-abcp-vre 1 add def } loop
+            /sm-abcp-vrv sm-abcp-vre sm-abcp-vrk gt { sm-abcp-vrs sm-abcp-vrk sm-abcp-vre sm-abcp-sub } { null } ifelse def
+          } ifelse
+          sm-abcp-vrv null ne {
+            sm-abcp-vrd sm-abcp-vrs sm-abcp-vrp sm-abcp-vrw sm-abcp-sub sm-abcp-lower sm-abcp-vrv sm-abcp-copy put
+            /sm-abcp-vrp sm-abcp-vre def exit } if
+        } if
+      } if
+      sm-abcp-vrsb sm-abcp-vrs sm-abcp-vrp get sm-abcp-sbputc /sm-abcp-vrp sm-abcp-vrp 1 add def exit
+    } loop } loop
+  sm-abcp-vrsb sm-abcp-sbstr sm-abcp-words {
+    dup sm-abcp-clef null ne sm-abcp-vrd /clef known not and { sm-abcp-vrd exch /clef exch put } { pop } ifelse } forall
+  sm-abcp-vrd
+} bind def
+
+% value sm-abcp-idrest id rest   (value.trim().split(/\s+/): first, rest joined)
+/sm-abcp-idrest {
+  sm-abcp-words dup length 0 eq { pop () () } {
+    dup 0 get sm-abcp-copy exch dup length 1 sub 1 exch getinterval sm-abcp-join } ifelse
+} bind def
+
+% ================================================================ score state
+/sm-abcp-newmeasure { << /events sm-abcp-lnew /startRepeat false /endBar null /lineBreak false >> } bind def
+/sm-abcp-vg { sm-abcp-v exch get } bind def
+/sm-abcp-vp { sm-abcp-v 3 1 roll put } bind def
+
+% id props sm-abcp-getvoice voice
+/sm-abcp-getvoice {
+  /sm-abcp-gp exch def /sm-abcp-gid exch def
+  sm-abcp-voicebyid sm-abcp-gid known { sm-abcp-voicebyid sm-abcp-gid get } {
+    << /id sm-abcp-gid sm-abcp-copy /name () /clef (treble) sm-abcp-clef /measures sm-abcp-lnew
+       /cur sm-abcp-newmeasure /unitLen null /tup null /slurPending 0 /beamBreak true /chord null
+       /annots sm-abcp-lnew /decos sm-abcp-lnew /grace null /lastEvent null /broken null
+       /openTies [] /lyricQueue sm-abcp-lnew /verse 0 /wDone false >>
+    dup sm-abcp-voicebyid exch sm-abcp-gid exch put
+    dup sm-abcp-voices exch sm-abcp-lpush
+  } ifelse
+  /sm-abcp-gv exch def
+  /sm-abcp-gn null def
+  sm-abcp-gp /name known { sm-abcp-gp /name get length 0 gt { /sm-abcp-gn sm-abcp-gp /name get def } if } if
+  sm-abcp-gn null eq sm-abcp-gp /nm known and { sm-abcp-gp /nm get length 0 gt { /sm-abcp-gn sm-abcp-gp /nm get def } if } if
+  sm-abcp-gn null ne { sm-abcp-gv /name sm-abcp-gn sm-abcp-text put } if
+  sm-abcp-gp /clef known {
+    sm-abcp-gp /clef get sm-abcp-clef dup null ne { sm-abcp-gv exch /clef exch put } {
+      pop (unknown clef ") sm-abcp-gp /clef get sm-abcp-cat (") sm-abcp-cat sm-abcp-warn } ifelse } if
+  sm-abcp-gv
+} bind def
+/sm-abcp-ensurevoice { sm-abcp-voices /n get 0 eq { (1) 1 dict sm-abcp-getvoice pop } if } bind def
+% the unit note length for voice sm-abcp-v
+/sm-abcp-L {
+  /unitLen sm-abcp-vg dup null eq { pop sm-abcp-unitlen dup null eq { pop
+    sm-abcp-mtr /num get 0 ne 4 sm-abcp-mtr /num get mul 3 sm-abcp-mtr /den get mul lt and
+    { [1 16] } { [1 8] } ifelse } if } if
+} bind def
+
+% f(byte) value sm-abcp-header -
+/sm-abcp-header {
+  /sm-abcp-hv exch def /sm-abcp-hf exch def
+  sm-abcp-hf 84 eq { sm-abcp-meta /title get length 0 eq { sm-abcp-meta /title sm-abcp-hv sm-abcp-text put }
+    { sm-abcp-meta /subtitles get sm-abcp-hv sm-abcp-text sm-abcp-lpush } ifelse } if
+  sm-abcp-hf 67 eq { sm-abcp-meta /composer get dup length 0 gt { (, ) sm-abcp-cat sm-abcp-hv sm-abcp-text sm-abcp-cat }
+    { pop sm-abcp-hv sm-abcp-text } ifelse sm-abcp-meta exch /composer exch put } if
+  sm-abcp-hf 79 eq { sm-abcp-meta /origin sm-abcp-hv sm-abcp-text put } if
+  sm-abcp-hf 65 eq { sm-abcp-meta /area sm-abcp-hv sm-abcp-text put } if
+  sm-abcp-hf 82 eq { sm-abcp-meta /rhythm sm-abcp-hv sm-abcp-text put } if
+  sm-abcp-hf 90 eq { sm-abcp-meta /transcriber sm-abcp-hv sm-abcp-text put } if
+  sm-abcp-hf 78 eq { sm-abcp-meta /notes get sm-abcp-hv sm-abcp-text sm-abcp-lpush } if
+  sm-abcp-hf 83 eq { sm-abcp-meta /source sm-abcp-hv sm-abcp-text put } if
+  sm-abcp-hf 66 eq { sm-abcp-meta /book sm-abcp-hv sm-abcp-text put } if
+  sm-abcp-hf 72 eq { sm-abcp-meta /history get sm-abcp-hv sm-abcp-text sm-abcp-lpush } if
+  sm-abcp-hf 87 eq { sm-abcp-meta /words get sm-abcp-hv sm-abcp-text sm-abcp-lpush } if
+  sm-abcp-hf 81 eq { sm-abcp-score /tempo sm-abcp-hv sm-abcp-tempo put } if
+  sm-abcp-hf 76 eq { sm-abcp-hv sm-abcp-findfrac { sm-abcp-F /sm-abcp-unitlen exch def }
+    { (bad L: ) sm-abcp-hv sm-abcp-cat sm-abcp-warn } ifelse } if
+  sm-abcp-hf 77 eq { sm-abcp-hv sm-abcp-meter dup null ne { /sm-abcp-mtr exch def }
+    { pop (bad M: ) sm-abcp-hv sm-abcp-cat sm-abcp-warn } ifelse } if
+  sm-abcp-hf 86 eq { sm-abcp-hv sm-abcp-idrest sm-abcp-vprops sm-abcp-getvoice pop } if
+  sm-abcp-hf 75 eq {
+    sm-abcp-hv sm-abcp-keytext /sm-abcp-hc exch def /sm-abcp-key exch def
+    sm-abcp-hc null ne { sm-abcp-ensurevoice
+      sm-abcp-voices sm-abcp-larr { /clef sm-abcp-hc put } forall } if } if
+} bind def
+
+% f(byte) value sm-abcp-inline -   (inline/body field, voice sm-abcp-v)
+/sm-abcp-inline {
+  /sm-abcp-iv exch def /sm-abcp-if exch def
+  sm-abcp-if 75 eq {
+    sm-abcp-iv sm-abcp-keytext /sm-abcp-ic exch def /sm-abcp-ik exch def
+    sm-abcp-iv sm-abcp-trim dup length 0 gt exch (clef=) sm-abcp-pre not and {
+      /sm-abcp-key sm-abcp-ik def /cur sm-abcp-vg /key sm-abcp-ik put } if
+    sm-abcp-ic null ne { /cur sm-abcp-vg /clef sm-abcp-ic put } if } if
+  sm-abcp-if 77 eq { sm-abcp-iv sm-abcp-meter dup null ne { dup /sm-abcp-mtr exch def /cur sm-abcp-vg exch /time exch put } { pop } ifelse } if
+  sm-abcp-if 76 eq { sm-abcp-iv sm-abcp-findfrac { sm-abcp-F /unitLen exch sm-abcp-vp } if } if
+  sm-abcp-if 81 eq { sm-abcp-score /tempo get null eq { sm-abcp-score /tempo sm-abcp-iv sm-abcp-tempo put } if } if
+  sm-abcp-if 86 eq { sm-abcp-iv sm-abcp-idrest sm-abcp-vprops sm-abcp-getvoice /sm-abcp-voice exch def } if
+  sm-abcp-if 80 eq { /cur sm-abcp-vg /annotPart sm-abcp-iv sm-abcp-trim sm-abcp-text put } if
+} bind def
+
+% ================================================================ notes
+% s i sm-abcp-plen len next   (parseLength: the written multiplier)
+/sm-abcp-plen {
+  /sm-abcp-pli exch def /sm-abcp-pls exch def
+  /sm-abcp-plj sm-abcp-pls sm-abcp-pli sm-abcp-digits def
+  /sm-abcp-pln sm-abcp-plj sm-abcp-pli gt { sm-abcp-pls sm-abcp-pli sm-abcp-plj sm-abcp-int } { 1 } ifelse def
+  /sm-abcp-plk sm-abcp-pls sm-abcp-plj 47 sm-abcp-run def
+  /sm-abcp-plm sm-abcp-pls sm-abcp-plk sm-abcp-digits def
+  /sm-abcp-pld 1 def
+  sm-abcp-plk sm-abcp-plj gt {
+    /sm-abcp-pld sm-abcp-plm sm-abcp-plk gt { sm-abcp-pls sm-abcp-plk sm-abcp-plm sm-abcp-int }
+      { 1 sm-abcp-plk sm-abcp-plj sub bitshift } ifelse def } if
+  sm-abcp-pln 0 eq { /sm-abcp-pln 1 def } if
+  sm-abcp-pld 0 eq { /sm-abcp-pld 1 def } if
+  sm-abcp-pln sm-abcp-pld sm-abcp-F sm-abcp-plm
+} bind def
+
+% s i sm-abcp-pnote note len next true | false   (parseNote)
+/sm-abcp-pnote {
+  /sm-abcp-pni exch def /sm-abcp-pns exch def
+  /sm-abcp-pnj sm-abcp-pni def /sm-abcp-pnacc null def
+  /sm-abcp-pnc sm-abcp-pns sm-abcp-pnj sm-abcp-ch def
+  sm-abcp-pnc 94 eq { sm-abcp-pns sm-abcp-pnj 1 add sm-abcp-ch 94 eq
+    { /sm-abcp-pnacc (dsharp) def /sm-abcp-pnj sm-abcp-pnj 2 add def } { /sm-abcp-pnacc (sharp) def /sm-abcp-pnj sm-abcp-pnj 1 add def } ifelse } if
+  sm-abcp-pnc 95 eq { sm-abcp-pns sm-abcp-pnj 1 add sm-abcp-ch 95 eq
+    { /sm-abcp-pnacc (dflat) def /sm-abcp-pnj sm-abcp-pnj 2 add def } { /sm-abcp-pnacc (flat) def /sm-abcp-pnj sm-abcp-pnj 1 add def } ifelse } if
+  sm-abcp-pnc 61 eq { /sm-abcp-pnacc (natural) def /sm-abcp-pnj sm-abcp-pnj 1 add def } if
+  /sm-abcp-pnc sm-abcp-pns sm-abcp-pnj sm-abcp-ch def
+  /sm-abcp-pno -1 def
+  sm-abcp-pnc 65 ge sm-abcp-pnc 71 le and { /sm-abcp-pno 4 def /sm-abcp-pnstep sm-abcp-pnc sm-abcp-chr def } if
+  sm-abcp-pnc 97 ge sm-abcp-pnc 103 le and { /sm-abcp-pno 5 def /sm-abcp-pnstep sm-abcp-pnc 32 sub sm-abcp-chr def } if
+  sm-abcp-pno 0 lt { false } {
+    /sm-abcp-pnj sm-abcp-pnj 1 add def
+    { sm-abcp-pns sm-abcp-pnj sm-abcp-ch
+      dup 39 eq { pop /sm-abcp-pno sm-abcp-pno 1 add def } {
+      44 eq { /sm-abcp-pno sm-abcp-pno 1 sub def } { exit } ifelse } ifelse
+      /sm-abcp-pnj sm-abcp-pnj 1 add def } loop
+    << /step sm-abcp-pnstep /oct sm-abcp-pno /acc sm-abcp-pnacc /tie false >>
+    sm-abcp-pns sm-abcp-pnj sm-abcp-plen /sm-abcp-pnj exch def
+    sm-abcp-pns sm-abcp-pnj sm-abcp-ch 45 eq { 1 index /tie true put /sm-abcp-pnj sm-abcp-pnj 1 add def } if
+    sm-abcp-pnj true
+  } ifelse
+} bind def
+
+% ev sm-abcp-addev -   (addEvent, voice sm-abcp-v)
+/sm-abcp-addev {
+  /sm-abcp-ae exch def
+  /chord sm-abcp-vg dup null ne { dup length 0 gt { sm-abcp-ae exch /chord exch put } { pop } ifelse /chord null sm-abcp-vp } { pop } ifelse
+  /sm-abcp-aan sm-abcp-lnew def
+  /annots sm-abcp-vg sm-abcp-larr { sm-abcp-aan exch sm-abcp-lpush } forall
+  /annots sm-abcp-lnew sm-abcp-vp
+  /sm-abcp-adl sm-abcp-lnew def
+  /decos sm-abcp-vg sm-abcp-larr { /sm-abcp-ad exch def
+    { sm-abcp-dynamics sm-abcp-ad known { sm-abcp-ae /dyn sm-abcp-ad put exit } if
+      sm-abcp-ad (crescendo\() eq { sm-abcp-ae /hairpinStart (cresc) put exit } if
+      sm-abcp-ad (diminuendo\() eq { sm-abcp-ae /hairpinStart (dim) put exit } if
+      sm-abcp-ad (crescendo\)) eq sm-abcp-ad (diminuendo\)) eq or { sm-abcp-ae /hairpinEnd true put exit } if
+      sm-abcp-textdecos sm-abcp-ad known {
+        sm-abcp-aan << /text sm-abcp-textdecos sm-abcp-ad get /pos (above) /italic true >> sm-abcp-lpush exit } if
+      sm-abcp-adl sm-abcp-ad sm-abcp-lpush exit } loop } forall
+  /decos sm-abcp-lnew sm-abcp-vp
+  sm-abcp-aan /n get 0 gt { sm-abcp-ae /annot sm-abcp-aan sm-abcp-larr put } if
+  sm-abcp-adl /n get 0 gt { sm-abcp-ae /decos sm-abcp-adl sm-abcp-larr put } if
+  /grace sm-abcp-vg null ne { sm-abcp-ae /grace /grace sm-abcp-vg put /grace null sm-abcp-vp } if
+  /slurPending sm-abcp-vg 0 ne { sm-abcp-ae /slurStart /slurPending sm-abcp-vg put /slurPending 0 sm-abcp-vp } if
+  sm-abcp-ae /beam /beamBreak sm-abcp-vg not put
+  /beamBreak false sm-abcp-vp
+  /broken sm-abcp-vg null ne { sm-abcp-ae /len sm-abcp-ae /len get /broken sm-abcp-vg sm-abcp-fmul put /broken null sm-abcp-vp } if
+  /tup sm-abcp-vg dup null ne {
+    /sm-abcp-atp exch def
+    sm-abcp-ae /tuplet << /id sm-abcp-atp /id get /p sm-abcp-atp /p get /q sm-abcp-atp /q get >> put
+    sm-abcp-ae /tup sm-abcp-atp /q get sm-abcp-atp /p get sm-abcp-F put
+    sm-abcp-atp /r sm-abcp-atp /r get 1 sub put
+    sm-abcp-atp /r get 0 le { /tup null sm-abcp-vp } if
+  } { pop } ifelse
+  /sm-abcp-anote sm-abcp-ae /kind get (note) eq def
+  sm-abcp-anote /openTies sm-abcp-vg length 0 gt and {
+    /sm-abcp-ahit 0 def
+    sm-abcp-ae /notes get { /sm-abcp-an exch def
+      false /openTies sm-abcp-vg { dup /step get sm-abcp-an /step get eq exch /oct get sm-abcp-an /oct get eq and or } forall
+      { /sm-abcp-ahit sm-abcp-ahit 1 add def } if } forall
+    sm-abcp-ahit sm-abcp-ae /notes get length eq { sm-abcp-ae /tiedFrom true put } if
+  } if
+  sm-abcp-anote { /openTies [ sm-abcp-ae /notes get { dup /tie get not { pop } if } forall ] sm-abcp-vp } if
+  /cur sm-abcp-vg /events get sm-abcp-ae sm-abcp-lpush
+  /lastEvent sm-abcp-ae sm-abcp-vp
+  sm-abcp-anote sm-abcp-ae /tiedFrom known not and {
+    /lyricQueue sm-abcp-vg << /ev sm-abcp-ae /m /measures sm-abcp-vg /n get >> sm-abcp-lpush } if
+} bind def
+
+% bar sm-abcp-close -   (closeMeasure, voice sm-abcp-v)
+/sm-abcp-close {
+  /sm-abcp-cb exch def
+  /sm-abcp-cm /cur sm-abcp-vg def
+  /sm-abcp-hc sm-abcp-cm /events get /n get 0 gt def
+  /sm-abcp-nm /measures sm-abcp-vg /n get def
+  sm-abcp-hc not sm-abcp-nm 0 eq and sm-abcp-cb /ending get null eq and {
+    sm-abcp-cb /startRepeat get { sm-abcp-cm /startRepeat true put } if
+  } {
+  sm-abcp-hc not sm-abcp-nm 0 gt and sm-abcp-cb /ending get null eq and
+  sm-abcp-cm /key known not and sm-abcp-cm /time known not and {
+    sm-abcp-cb /endBar get (single) eq not { /measures sm-abcp-vg sm-abcp-llast /endBar sm-abcp-cb /endBar get put } if
+    sm-abcp-cb /startRepeat get { sm-abcp-cm /startRepeat true put } if
+  } {
+    sm-abcp-cm /endBar sm-abcp-cb /endBar get put
+    /measures sm-abcp-vg sm-abcp-cm sm-abcp-lpush
+    /cur sm-abcp-newmeasure sm-abcp-vp
+    sm-abcp-cb /startRepeat get { /cur sm-abcp-vg /startRepeat true put } if
+    sm-abcp-cb /ending get null ne { /cur sm-abcp-vg /ending << /label sm-abcp-cb /ending get sm-abcp-copy >> put } if
+    /beamBreak true sm-abcp-vp
+  } ifelse } ifelse
+} bind def
+
+% s i sm-abcp-bar tok label|null next true | false   (the bar-line regex)
+/sm-abcp-bar {
+  /sm-abcp-bi exch def /sm-abcp-bs exch def
+  /sm-abcp-bj -1 def
+  /sm-abcp-bc sm-abcp-bs sm-abcp-bi 58 sm-abcp-run def
+  sm-abcp-bs sm-abcp-bc sm-abcp-ch 91 eq sm-abcp-bs sm-abcp-bc 1 add sm-abcp-ch 124 eq and { /sm-abcp-bj sm-abcp-bc 2 add def } if
+  sm-abcp-bj 0 lt { sm-abcp-bs sm-abcp-bc sm-abcp-ch 124 eq sm-abcp-bs sm-abcp-bc 1 add sm-abcp-ch 93 eq and { /sm-abcp-bj sm-abcp-bc 2 add def } if } if
+  sm-abcp-bj 0 lt sm-abcp-bc sm-abcp-bi gt and {
+    /sm-abcp-bp sm-abcp-bs sm-abcp-bc 124 sm-abcp-run def
+    sm-abcp-bp sm-abcp-bc gt { /sm-abcp-bq sm-abcp-bs sm-abcp-bp 58 sm-abcp-run def
+      sm-abcp-bq sm-abcp-bp gt { /sm-abcp-bj sm-abcp-bq def } if } if } if
+  sm-abcp-bj 0 lt sm-abcp-bc sm-abcp-bi sub 2 ge and { /sm-abcp-bj sm-abcp-bc def } if
+  sm-abcp-bj 0 lt { sm-abcp-bs sm-abcp-bc sm-abcp-ch 124 eq sm-abcp-bs sm-abcp-bc 1 add sm-abcp-ch 124 eq and {
+    /sm-abcp-bj sm-abcp-bs sm-abcp-bc 2 add 58 sm-abcp-run def } if } if
+  sm-abcp-bj 0 lt sm-abcp-bc sm-abcp-bi gt and { sm-abcp-bs sm-abcp-bc sm-abcp-ch 124 eq {
+    /sm-abcp-bj sm-abcp-bs sm-abcp-bc 1 add 58 sm-abcp-run def } if } if
+  sm-abcp-bj 0 lt {
+    /sm-abcp-bp sm-abcp-bs sm-abcp-bi 124 sm-abcp-run def
+    sm-abcp-bp sm-abcp-bi gt { /sm-abcp-bq sm-abcp-bs sm-abcp-bp 58 sm-abcp-run def
+      sm-abcp-bq sm-abcp-bp gt { /sm-abcp-bj sm-abcp-bq def } if } if } if
+  sm-abcp-bj 0 lt { sm-abcp-bs sm-abcp-bi sm-abcp-ch 124 eq { /sm-abcp-bj sm-abcp-bi 1 add def } if } if
+  sm-abcp-bj 0 lt { sm-abcp-bs sm-abcp-bi sm-abcp-ch 91 eq sm-abcp-bs sm-abcp-bi 1 add sm-abcp-ch sm-abcp-isdig and {
+    /sm-abcp-bj sm-abcp-bi 1 add def } if } if
+  sm-abcp-bj 0 lt { false } {
+    sm-abcp-bs sm-abcp-bj sm-abcp-ch sm-abcp-isdig {
+      /sm-abcp-bk sm-abcp-bj 1 add def
+      { sm-abcp-bs sm-abcp-bk sm-abcp-ch dup sm-abcp-isdig 1 index 44 eq or exch 45 eq or { /sm-abcp-bk sm-abcp-bk 1 add def } { exit } ifelse } loop
+      /sm-abcp-bl sm-abcp-bs sm-abcp-bj sm-abcp-bk sm-abcp-sub def
+    } { /sm-abcp-bl null def /sm-abcp-bk sm-abcp-bj def } ifelse
+    /sm-abcp-btok sm-abcp-bs sm-abcp-bi sm-abcp-bj sm-abcp-sub def
+    sm-abcp-btok ([) eq sm-abcp-bl null eq and { false } { sm-abcp-btok sm-abcp-bl sm-abcp-bk true } ifelse
+  } ifelse
+} bind def
+
+% ================================================================ music lines
+/sm-abcp-inc { /sm-abcp-i sm-abcp-i 1 add def } bind def
+/sm-abcp-at { sm-abcp-s exch sm-abcp-ch } bind def
+/sm-abcp-stopnow { /sm-abcp-stop true def } bind def
+
+% line sm-abcp-mline -   (musicLine for voice sm-abcp-voice)
+/sm-abcp-mline {
+  /sm-abcp-s exch def
+  /sm-abcp-v sm-abcp-voice def
+  /wDone sm-abcp-vg { /lyricQueue sm-abcp-lnew sm-abcp-vp /verse 0 sm-abcp-vp /wDone false sm-abcp-vp } if
+  /sm-abcp-i 0 def /sm-abcp-cont false def /sm-abcp-stop false def
+  /sm-abcp-n sm-abcp-s length def
+  { sm-abcp-stop sm-abcp-i sm-abcp-n ge or { exit } if
+    /sm-abcp-c sm-abcp-s sm-abcp-i get def
+    {
+      sm-abcp-c 37 eq { sm-abcp-stopnow exit } if
+      sm-abcp-c 92 eq { sm-abcp-s sm-abcp-i 1 add sm-abcp-tail sm-abcp-blank { /sm-abcp-cont true def sm-abcp-stopnow exit } if } if
+      sm-abcp-c 32 eq sm-abcp-c 9 eq or { /beamBreak true sm-abcp-vp sm-abcp-inc exit } if
+      sm-abcp-c 96 eq sm-abcp-c 121 eq or { sm-abcp-inc exit } if
+      % "chord symbol" or "^annotation"
+      sm-abcp-c 34 eq {
+        /sm-abcp-e sm-abcp-s 34 sm-abcp-i 1 add sm-abcp-idx def
+        sm-abcp-e 0 lt { sm-abcp-s sm-abcp-i 1 add sm-abcp-tail } { sm-abcp-s sm-abcp-i 1 add sm-abcp-e sm-abcp-sub } ifelse
+        sm-abcp-text /sm-abcp-t exch def
+        /sm-abcp-i sm-abcp-e 0 lt { sm-abcp-n } { sm-abcp-e 1 add } ifelse def
+        /sm-abcp-pos null def
+        sm-abcp-t length 0 gt { sm-abcp-posmap sm-abcp-t 0 get 2 copy known { get /sm-abcp-pos exch def } { pop pop } ifelse } if
+        sm-abcp-pos null ne { /annots sm-abcp-vg << /text sm-abcp-t 1 sm-abcp-tail /pos sm-abcp-pos >> sm-abcp-lpush } {
+          /chord sm-abcp-vg dup null ne { dup length 0 gt } { false } ifelse
+          { ( ) sm-abcp-cat sm-abcp-t sm-abcp-cat } { pop sm-abcp-t } ifelse /chord exch sm-abcp-vp } ifelse
+        exit } if
+      % !decoration! and +decoration+
+      sm-abcp-c 33 eq sm-abcp-c 43 eq { sm-abcp-s 43 sm-abcp-i 1 add sm-abcp-idx 0 ge } { false } ifelse or {
+        /sm-abcp-e sm-abcp-s sm-abcp-c sm-abcp-i 1 add sm-abcp-idx def
+        sm-abcp-e 0 lt { (unterminated decoration in ") sm-abcp-s sm-abcp-cat (") sm-abcp-cat sm-abcp-warn sm-abcp-stopnow exit } if
+        /sm-abcp-d sm-abcp-s sm-abcp-i 1 add sm-abcp-e sm-abcp-sub def
+        /decos sm-abcp-vg sm-abcp-decoalias sm-abcp-d known { sm-abcp-decoalias sm-abcp-d get } { sm-abcp-d sm-abcp-copy } ifelse sm-abcp-lpush
+        /sm-abcp-i sm-abcp-e 1 add def exit } if
+      sm-abcp-shortdeco sm-abcp-c known { /decos sm-abcp-vg sm-abcp-shortdeco sm-abcp-c get sm-abcp-lpush sm-abcp-inc exit } if
+      % {grace notes}
+      sm-abcp-c 123 eq {
+        /sm-abcp-e sm-abcp-s 125 sm-abcp-i sm-abcp-idx def
+        sm-abcp-e 0 lt { (unterminated grace group) sm-abcp-warn sm-abcp-stopnow exit } if
+        /sm-abcp-gb sm-abcp-s sm-abcp-i 1 add sm-abcp-e sm-abcp-sub def
+        /sm-abcp-gslash sm-abcp-gb (/) sm-abcp-pre def
+        sm-abcp-gslash { /sm-abcp-gb sm-abcp-gb 1 sm-abcp-tail def } if
+        /sm-abcp-gl sm-abcp-lnew def /sm-abcp-gk 0 def
+        { sm-abcp-gk sm-abcp-gb length ge { exit } if
+          sm-abcp-gb sm-abcp-gk sm-abcp-pnote { /sm-abcp-gk exch def pop sm-abcp-gl exch sm-abcp-lpush } { /sm-abcp-gk sm-abcp-gk 1 add def } ifelse } loop
+        sm-abcp-gl /n get 0 gt { /grace << /notes sm-abcp-gl sm-abcp-larr /slash sm-abcp-gslash >> sm-abcp-vp } if
+        /sm-abcp-i sm-abcp-e 1 add def exit } if
+      % [K:...] inline field
+      sm-abcp-c 91 eq { sm-abcp-i 1 add sm-abcp-at sm-abcp-isalpha sm-abcp-i 2 add sm-abcp-at 58 eq and } { false } ifelse {
+        /sm-abcp-e sm-abcp-s 93 sm-abcp-i sm-abcp-idx def
+        sm-abcp-i 1 add sm-abcp-at
+        sm-abcp-s sm-abcp-i 3 add sm-abcp-e 0 lt { sm-abcp-n } { sm-abcp-e } ifelse sm-abcp-sub
+        sm-abcp-inline
+        /sm-abcp-i sm-abcp-e 0 lt { sm-abcp-n } { sm-abcp-e 1 add } ifelse def exit } if
+      % bar lines, and endings written after them
+      sm-abcp-s sm-abcp-i sm-abcp-bar {
+        /sm-abcp-bk2 exch def /sm-abcp-blab exch def /sm-abcp-tok exch def
+        /sm-abcp-er sm-abcp-tok (:) sm-abcp-pre def
+        /sm-abcp-sr sm-abcp-tok length 0 gt { sm-abcp-tok dup length 1 sub get 58 eq } { false } ifelse def
+        /sm-abcp-eb (single) def /sm-abcp-srp false def
+        sm-abcp-tok ([) eq not {
+          sm-abcp-er sm-abcp-sr and { /sm-abcp-eb (repeat-end) def /sm-abcp-srp true def } {
+          sm-abcp-er { /sm-abcp-eb (repeat-end) def } {
+          sm-abcp-sr { /sm-abcp-eb sm-abcp-tok (||) sm-abcp-pre { (double) } { (single) } ifelse def /sm-abcp-srp true def } {
+          sm-abcp-tok (||) eq { /sm-abcp-eb (double) def } if
+          sm-abcp-tok (|]) eq { /sm-abcp-eb (final) def } if
+          sm-abcp-tok ([|) eq { /sm-abcp-eb (thick-thin) def } if
+          } ifelse } ifelse } ifelse
+        } if
+        << /endBar sm-abcp-eb /startRepeat sm-abcp-srp /ending sm-abcp-blab >> sm-abcp-close
+        /sm-abcp-i sm-abcp-bk2 def exit } if
+      % [chord]
+      sm-abcp-c 91 eq {
+        /sm-abcp-e sm-abcp-s 93 sm-abcp-i sm-abcp-idx def
+        sm-abcp-e 0 lt { (unterminated chord) sm-abcp-warn sm-abcp-stopnow exit } if
+        /sm-abcp-cbd sm-abcp-s sm-abcp-i 1 add sm-abcp-e sm-abcp-sub def
+        /sm-abcp-cnl sm-abcp-lnew def /sm-abcp-cfirst null def /sm-abcp-ck 0 def
+        { sm-abcp-ck sm-abcp-cbd length ge { exit } if
+          sm-abcp-cbd sm-abcp-ck sm-abcp-pnote {
+            /sm-abcp-ck exch def sm-abcp-cfirst null eq { /sm-abcp-cfirst exch def } { pop } ifelse
+            sm-abcp-cnl exch sm-abcp-lpush } { /sm-abcp-ck sm-abcp-ck 1 add def } ifelse } loop
+        sm-abcp-s sm-abcp-e 1 add sm-abcp-plen /sm-abcp-cj exch def /sm-abcp-clen exch def
+        sm-abcp-cj sm-abcp-at 45 eq { sm-abcp-cnl sm-abcp-larr { /tie true put } forall /sm-abcp-cj sm-abcp-cj 1 add def } if
+        sm-abcp-cnl /n get 0 gt {
+          << /kind (note) /notes sm-abcp-cnl sm-abcp-larr
+             /len sm-abcp-L sm-abcp-cfirst null eq { [1 1] } { sm-abcp-cfirst } ifelse sm-abcp-clen sm-abcp-fmul sm-abcp-fmul >>
+          sm-abcp-addev } if
+        /sm-abcp-i sm-abcp-cj def exit } if
+      % (3 tuplets and ( slurs
+      sm-abcp-c 40 eq {
+        sm-abcp-i 1 add sm-abcp-at sm-abcp-isdig {
+          /sm-abcp-tp sm-abcp-i 1 add sm-abcp-at 48 sub def
+          /sm-abcp-tk sm-abcp-i 2 add def /sm-abcp-tqs () def /sm-abcp-trs () def
+          sm-abcp-tk sm-abcp-at 58 eq {
+            /sm-abcp-tk2 sm-abcp-s sm-abcp-tk 1 add sm-abcp-digits def
+            /sm-abcp-tqs sm-abcp-s sm-abcp-tk 1 add sm-abcp-tk2 sm-abcp-sub def /sm-abcp-tk sm-abcp-tk2 def
+            sm-abcp-tk sm-abcp-at 58 eq {
+              /sm-abcp-tk2 sm-abcp-s sm-abcp-tk 1 add sm-abcp-digits def
+              /sm-abcp-trs sm-abcp-s sm-abcp-tk 1 add sm-abcp-tk2 sm-abcp-sub def /sm-abcp-tk sm-abcp-tk2 def } if } if
+          /sm-abcp-tq sm-abcp-tqs length 0 gt { sm-abcp-tqs cvi } {
+            sm-abcp-tupq sm-abcp-tp known { sm-abcp-tupq sm-abcp-tp get } {
+              sm-abcp-mtr /num get 3 mod 0 eq sm-abcp-mtr /num get 3 gt and { 3 } { 2 } ifelse } ifelse } ifelse def
+          /sm-abcp-tr sm-abcp-trs length 0 gt { sm-abcp-trs cvi } { sm-abcp-tp } ifelse def
+          /sm-abcp-tupid sm-abcp-tupid 1 add def
+          /tup << /id sm-abcp-tupid /p sm-abcp-tp /q sm-abcp-tq /r sm-abcp-tr >> sm-abcp-vp
+          /sm-abcp-i sm-abcp-tk def
+        } { /slurPending /slurPending sm-abcp-vg 1 add sm-abcp-vp sm-abcp-inc } ifelse
+        exit } if
+      sm-abcp-c 41 eq {
+        /lastEvent sm-abcp-vg dup null ne {
+          dup /slurEnd known { dup /slurEnd get } { 0 } ifelse 1 add /slurEnd exch put } { pop } ifelse
+        sm-abcp-inc exit } if
+      sm-abcp-c 45 eq {
+        /lastEvent sm-abcp-vg dup null ne { dup /kind get (note) eq } { false } ifelse {
+          /notes get dup { /tie true put } forall /openTies exch sm-abcp-vp } { pop } ifelse
+        sm-abcp-inc exit } if
+      % broken rhythm
+      sm-abcp-c 60 eq sm-abcp-c 62 eq or {
+        /sm-abcp-rk sm-abcp-i def
+        { sm-abcp-rk sm-abcp-at dup 60 eq exch 62 eq or { /sm-abcp-rk sm-abcp-rk 1 add def } { exit } ifelse } loop
+        /sm-abcp-rk sm-abcp-rk sm-abcp-i sub def
+        /sm-abcp-rbig 1 sm-abcp-rk 1 add bitshift 1 sub 1 sm-abcp-rk bitshift sm-abcp-F def
+        /sm-abcp-rsmall 1 1 sm-abcp-rk bitshift sm-abcp-F def
+        /lastEvent sm-abcp-vg dup null ne {
+          dup /len get sm-abcp-c 62 eq { sm-abcp-rbig } { sm-abcp-rsmall } ifelse sm-abcp-fmul /len exch put } { pop } ifelse
+        /broken sm-abcp-c 62 eq { sm-abcp-rsmall } { sm-abcp-rbig } ifelse sm-abcp-vp
+        /sm-abcp-i sm-abcp-i sm-abcp-rk add def exit } if
+      % rests
+      sm-abcp-c 122 eq sm-abcp-c 120 eq or sm-abcp-c 90 eq or sm-abcp-c 88 eq or {
+        sm-abcp-s sm-abcp-i 1 add sm-abcp-plen /sm-abcp-rn exch def /sm-abcp-rl exch def
+        sm-abcp-c 90 eq sm-abcp-c 88 eq or {
+          /sm-abcp-rc sm-abcp-i 1 add sm-abcp-at sm-abcp-isdig { sm-abcp-rl 0 get } { 1 } ifelse def
+          << /kind (rest) /notes [] /len sm-abcp-mtr /num get dup 0 eq { pop 4 } if sm-abcp-mtr /den get dup 0 eq { pop 4 } if sm-abcp-F
+             /rest << /measure true /count sm-abcp-rc /invisible sm-abcp-c 88 eq >> >> sm-abcp-addev
+          /cur sm-abcp-vg /mmCount sm-abcp-rc put
+        } { << /kind (rest) /notes [] /len sm-abcp-L sm-abcp-rl sm-abcp-fmul /rest << /invisible sm-abcp-c 120 eq >> >> sm-abcp-addev } ifelse
+        /sm-abcp-i sm-abcp-rn def exit } if
+      sm-abcp-c 38 eq { (voice overlay \(&\) is not supported; the rest of the line is skipped) sm-abcp-warn sm-abcp-stopnow exit } if
+      % a note
+      sm-abcp-s sm-abcp-i sm-abcp-pnote {
+        /sm-abcp-i exch def /sm-abcp-nl exch def 1 array astore /sm-abcp-nn exch def
+        << /kind (note) /notes sm-abcp-nn /len sm-abcp-L sm-abcp-nl sm-abcp-fmul >> sm-abcp-addev
+        exit } if
+      sm-abcp-c 92 ne sm-abcp-c 36 ne and sm-abcp-c 42 ne and {
+        (skipped ") sm-abcp-c sm-abcp-chr sm-abcp-cat (" in: ) sm-abcp-cat sm-abcp-s sm-abcp-trim sm-abcp-cat sm-abcp-warn } if
+      sm-abcp-inc exit
+    } loop
+  } loop
+  sm-abcp-cont not {
+    /cur sm-abcp-vg /events get /n get 0 gt { /cur sm-abcp-vg } {
+      /measures sm-abcp-vg dup /n get 0 gt { sm-abcp-llast } { pop null } ifelse } ifelse
+    dup null ne { /lineBreak true put } { pop } ifelse
+  } if
+} bind def
+
+% ================================================================ lyrics
+/sm-abcp-ysb sm-abcp-sbnew def
+% ev verse syl sm-abcp-lyrset -   : ev.lyrics[verse] = syl (holes are null)
+/sm-abcp-lyrset {
+  /sm-abcp-lzs exch def /sm-abcp-lzv exch def /sm-abcp-lze exch def
+  sm-abcp-lze /lyrics known not { sm-abcp-lze /lyrics 0 array put } if
+  /sm-abcp-lza sm-abcp-lze /lyrics get def
+  sm-abcp-lzv sm-abcp-lza length ge {
+    sm-abcp-lzv 1 add array dup 0 sm-abcp-lza putinterval /sm-abcp-lza exch def
+    sm-abcp-lze /lyrics sm-abcp-lza put } if
+  sm-abcp-lza sm-abcp-lzv sm-abcp-lzs put
+} bind def
+/sm-abcp-yput { % syl -> -
+  sm-abcp-yk sm-abcp-yq /n get lt { sm-abcp-yq sm-abcp-yk sm-abcp-lget /ev get exch sm-abcp-yverse exch sm-abcp-lyrset } { pop } ifelse
+  /sm-abcp-yk sm-abcp-yk 1 add def
+} bind def
+/sm-abcp-yflush { % hyphen -> bool
+  sm-abcp-ysb /n get 0 gt {
+    /sm-abcp-yh exch def
+    sm-abcp-ysb sm-abcp-sbstr
+    0 1 2 index length 1 sub { 2 copy get 126 eq { 1 index exch 32 put } { pop } ifelse } for
+    sm-abcp-text << exch /text exch /hyphen sm-abcp-yh >> sm-abcp-yput
+    sm-abcp-ysb sm-abcp-sbclear true
+  } { pop false } ifelse
+} bind def
+/sm-abcp-yprev { % -> syl|null  : lyric of the previous queue entry in this verse
+  sm-abcp-yk 0 gt sm-abcp-yk 1 sub sm-abcp-yq /n get lt and {
+    sm-abcp-yq sm-abcp-yk 1 sub sm-abcp-lget /ev get dup /lyrics known {
+      /lyrics get dup length sm-abcp-yverse gt { sm-abcp-yverse get } { pop null } ifelse } { pop null } ifelse
+  } { null } ifelse
+} bind def
+% text sm-abcp-lyrics -   (lyricLine, voice sm-abcp-v)
+/sm-abcp-lyrics {
+  /sm-abcp-yt exch def
+  /sm-abcp-yverse /verse sm-abcp-vg def
+  /verse sm-abcp-yverse 1 add sm-abcp-vp /wDone true sm-abcp-vp
+  /sm-abcp-yq /lyricQueue sm-abcp-vg def
+  /sm-abcp-yk 0 def /sm-abcp-yi 0 def sm-abcp-ysb sm-abcp-sbclear
+  { sm-abcp-yi sm-abcp-yt length ge { exit } if
+    /sm-abcp-yc sm-abcp-yt sm-abcp-yi get def
+    { sm-abcp-yc 92 eq sm-abcp-yt sm-abcp-yi 1 add sm-abcp-ch 45 eq and {
+        sm-abcp-ysb 45 sm-abcp-sbputc /sm-abcp-yi sm-abcp-yi 1 add def exit } if
+      sm-abcp-yc 32 eq sm-abcp-yc 9 eq or { false sm-abcp-yflush pop exit } if
+      sm-abcp-yc 45 eq { true sm-abcp-yflush not {
+          sm-abcp-yprev dup null ne { /hyphen true put } { pop } ifelse null sm-abcp-yput } if exit } if
+      sm-abcp-yc 95 eq { false sm-abcp-yflush pop
+        sm-abcp-yprev dup null ne { /extend true put } { pop } ifelse null sm-abcp-yput exit } if
+      sm-abcp-yc 42 eq { false sm-abcp-yflush pop null sm-abcp-yput exit } if
+      sm-abcp-yc 124 eq { false sm-abcp-yflush pop
+        sm-abcp-yk sm-abcp-yq /n get lt {
+          /sm-abcp-ym0 sm-abcp-yk 0 gt { sm-abcp-yq sm-abcp-yk 1 sub sm-abcp-lget /m get } { -1 } ifelse def
+          { sm-abcp-yk sm-abcp-yq /n get lt { sm-abcp-yq sm-abcp-yk sm-abcp-lget /m get sm-abcp-ym0 le } { false } ifelse
+            { /sm-abcp-yk sm-abcp-yk 1 add def } { exit } ifelse } loop } if
+        exit } if
+      sm-abcp-ysb sm-abcp-yc sm-abcp-sbputc exit
+    } loop
+    /sm-abcp-yi sm-abcp-yi 1 add def
+  } loop
+  false sm-abcp-yflush pop
+} bind def
+
+% ================================================================ finalisation
+% d sm-abcp-nvals [[type dots] ...]   (noteValues)
+/sm-abcp-nvals {
+  /sm-abcp-nvr exch def /sm-abcp-nvl sm-abcp-lnew def /sm-abcp-nvg 0 def
+  { sm-abcp-nvr 0 get 0 gt sm-abcp-nvg 8 lt and not { exit } if
+    /sm-abcp-nvg sm-abcp-nvg 1 add def
+    /sm-abcp-nvf null def
+    1 -1 -7 { /sm-abcp-nve exch def
+      /sm-abcp-nvt sm-abcp-nve 0 ge { 1 sm-abcp-nve bitshift 1 } { 1 1 sm-abcp-nve neg bitshift } ifelse 2 array astore def
+      [[2 [7 4]] [1 [3 2]] [0 [1 1]]] { aload pop /sm-abcp-nvm exch def /sm-abcp-nvd exch def
+        sm-abcp-nvt sm-abcp-nvm sm-abcp-fmul dup sm-abcp-nvr sm-abcp-fcmp 0 le {
+          /sm-abcp-nvv exch def /sm-abcp-nvf [ sm-abcp-nvt sm-abcp-nvd ] def exit } { pop } ifelse } forall
+      sm-abcp-nvf null ne { exit } if } for
+    sm-abcp-nvf null eq { exit } if
+    sm-abcp-nvl sm-abcp-nvf sm-abcp-lpush
+    /sm-abcp-nvr sm-abcp-nvr sm-abcp-nvv sm-abcp-fsub def
+  } loop
+  sm-abcp-nvl sm-abcp-larr
+} bind def
+/sm-abcp-dcopy { dup length 4 add dict copy } bind def
+
+% ev sm-abcp-fevent -   : finalizeEvent, the results pushed onto sm-abcp-fel
+/sm-abcp-fevent {
+  /sm-abcp-fe exch def
+  /sm-abcp-ftup sm-abcp-fe /tup known { sm-abcp-fe /tup get } { [1 1] } ifelse def
+  sm-abcp-fe /rest known { sm-abcp-fe /rest get dup /measure known { /measure get } { pop false } ifelse } { false } ifelse {
+    sm-abcp-fe sm-abcp-dcopy dup /dur sm-abcp-fe /len get put dup /type [1 1] put dup /dots 0 put
+    sm-abcp-fel exch sm-abcp-lpush
+  } {
+    /sm-abcp-fparts sm-abcp-fe /len get sm-abcp-nvals def
+    sm-abcp-fparts length 1 le {
+      sm-abcp-fparts length 1 eq { sm-abcp-fparts 0 get } { [[1 4] 0] } ifelse aload pop /sm-abcp-fd exch def /sm-abcp-ft exch def
+      sm-abcp-fe sm-abcp-dcopy dup /type sm-abcp-ft put dup /dots sm-abcp-fd put
+      dup /dur sm-abcp-fe /len get sm-abcp-ftup sm-abcp-fmul put
+      sm-abcp-fel exch sm-abcp-lpush
+    } {
+      0 1 sm-abcp-fparts length 1 sub { /sm-abcp-fi exch def
+        sm-abcp-fparts sm-abcp-fi get aload pop /sm-abcp-fd exch def /sm-abcp-ft exch def
+        /sm-abcp-flast sm-abcp-fi sm-abcp-fparts length 1 sub eq def
+        /sm-abcp-fx sm-abcp-fe sm-abcp-dcopy def
+        sm-abcp-fx /type sm-abcp-ft put sm-abcp-fx /dots sm-abcp-fd put
+        sm-abcp-fx /dur sm-abcp-ft sm-abcp-fd 2 eq { [7 4] } { sm-abcp-fd 1 eq { [3 2] } { [1 1] } ifelse } ifelse
+          sm-abcp-fmul sm-abcp-ftup sm-abcp-fmul put
+        sm-abcp-fx /notes [ sm-abcp-fe /notes get { sm-abcp-dcopy sm-abcp-flast not { dup /tie true put } if } forall ] put
+        sm-abcp-fi 0 gt {
+          sm-abcp-fx /beam true put sm-abcp-fx /tiedFrom true put
+          [/chord /annot /lyrics /grace /decos /dyn /slurStart] { sm-abcp-fx exch undef } forall } if
+        sm-abcp-flast not { sm-abcp-fx /slurEnd undef } if
+        sm-abcp-fel sm-abcp-fx sm-abcp-lpush
+      } for
+    } ifelse
+  } ifelse
+} bind def
+
+% sm-abcp-finalize -   : voices' measure lists -> sm-abcp-score /measures
+/sm-abcp-finalize {
+  /sm-abcp-fvs sm-abcp-voices sm-abcp-larr def
+  /sm-abcp-fcount 0 def
+  sm-abcp-fvs { /measures get /n get dup sm-abcp-fcount gt { /sm-abcp-fcount exch def } { pop } ifelse } forall
+  /sm-abcp-fms sm-abcp-lnew def
+  0 1 sm-abcp-fcount 1 sub { /sm-abcp-fmi exch def
+    /sm-abcp-ftop sm-abcp-fvs 0 get /measures get dup /n get sm-abcp-fmi gt { sm-abcp-fmi sm-abcp-lget } { pop sm-abcp-newmeasure } ifelse def
+    /sm-abcp-fst [ sm-abcp-fvs { /measures get /sm-abcp-fvm exch def
+      /sm-abcp-fel sm-abcp-lnew def
+      sm-abcp-fvm /n get sm-abcp-fmi gt { sm-abcp-fvm sm-abcp-fmi sm-abcp-lget /events get sm-abcp-larr { sm-abcp-fevent } forall } if
+      << /events sm-abcp-fel sm-abcp-larr >> } forall ] def
+    /sm-abcp-fm << /staves sm-abcp-fst /startRepeat sm-abcp-ftop /startRepeat get
+      /endBar sm-abcp-ftop /endBar get dup null eq { pop (single) } if
+      /lineBreak sm-abcp-ftop /lineBreak get
+      /mmCount sm-abcp-ftop /mmCount known { sm-abcp-ftop /mmCount get } { 0 } ifelse >> def
+    sm-abcp-fvs { /measures get dup /n get sm-abcp-fmi gt { sm-abcp-fmi sm-abcp-lget /sm-abcp-fmm exch def
+      sm-abcp-fmm /key known sm-abcp-fm /key known not and { sm-abcp-fm /key sm-abcp-fmm /key get put } if
+      sm-abcp-fmm /time known sm-abcp-fm /time known not and { sm-abcp-fm /time sm-abcp-fmm /time get put } if
+      sm-abcp-fmm /ending known sm-abcp-fm /ending known not and { sm-abcp-fm /ending sm-abcp-fmm /ending get sm-abcp-dcopy put } if
+      sm-abcp-fmm /annotPart known sm-abcp-fm /part known not and { sm-abcp-fm /part sm-abcp-fmm /annotPart get put } if
+      } { pop } ifelse } forall
+    sm-abcp-fm /clefs [ sm-abcp-fvs { /measures get dup /n get sm-abcp-fmi gt { sm-abcp-fmi sm-abcp-lget
+      dup /clef known { /clef get } { pop null } ifelse } { pop null } ifelse } forall ] put
+    sm-abcp-fms sm-abcp-fm sm-abcp-lpush
+  } for
+  /sm-abcp-fma sm-abcp-fms sm-abcp-larr def
+  sm-abcp-score /measures sm-abcp-fma put
+  % a voice that ran short gets whole-measure rests
+  /sm-abcp-ftime sm-abcp-score /initial get /time get def
+  sm-abcp-fma { dup /time known { dup /time get /sm-abcp-ftime exch def } if
+    /staves get { dup /events get length 0 eq {
+      /events [ << /kind (rest) /notes [] /dur sm-abcp-ftime /num get 0 ne { sm-abcp-ftime /num get sm-abcp-ftime /den get sm-abcp-F } { [1 1] } ifelse
+        /type [1 1] /dots 0 /rest << /measure true /count 1 /invisible false >> /beam false >> ] put } { pop } ifelse } forall } forall
+  % numbers: a short first measure is a pickup, number 0
+  /sm-abcp-fn 1 def /sm-abcp-ftime sm-abcp-score /initial get /time get def
+  0 1 sm-abcp-fma length 1 sub { /sm-abcp-fmi exch def /sm-abcp-fm sm-abcp-fma sm-abcp-fmi get def
+    sm-abcp-fm /time known { /sm-abcp-ftime sm-abcp-fm /time get def } if
+    /sm-abcp-fpick false def
+    sm-abcp-fmi 0 eq sm-abcp-ftime /num get 0 ne and {
+      [0 1] sm-abcp-fm /staves get 0 get /events get { /dur get sm-abcp-fadd } forall
+      sm-abcp-ftime /num get sm-abcp-ftime /den get sm-abcp-F sm-abcp-fcmp 0 lt sm-abcp-fma length 1 gt and {
+        sm-abcp-fm /number 0 put sm-abcp-fm /pickup true put /sm-abcp-fpick true def } if } if
+    sm-abcp-fpick not {
+      sm-abcp-fm /number sm-abcp-fn put
+      /sm-abcp-fn sm-abcp-fn sm-abcp-fm /mmCount get dup 0 eq { pop 1 } if 1 max add def } if
+  } for
+  % endings
+  0 1 sm-abcp-fma length 1 sub { /sm-abcp-fmi exch def /sm-abcp-fm sm-abcp-fma sm-abcp-fmi get def
+    sm-abcp-fm /ending known {
+      /sm-abcp-fj sm-abcp-fmi def /sm-abcp-fcl false def
+      { sm-abcp-fj sm-abcp-fma length ge { exit } if
+        /sm-abcp-fmj sm-abcp-fma sm-abcp-fj get def
+        sm-abcp-fj sm-abcp-fmi gt { sm-abcp-fmj /ending known sm-abcp-fmj /startRepeat get or } { false } ifelse {
+          /sm-abcp-fj sm-abcp-fj 1 sub def exit } if
+        /sm-abcp-fb2 sm-abcp-fmj /endBar get def
+        sm-abcp-fb2 (repeat-end) eq { /sm-abcp-fcl true def exit } if
+        sm-abcp-fb2 (double) eq sm-abcp-fb2 (final) eq or sm-abcp-fb2 (thick-thin) eq or {
+          /sm-abcp-fcl sm-abcp-fb2 (final) ne def exit } if
+        sm-abcp-fj sm-abcp-fmi sub 3 ge sm-abcp-fcl not and { exit } if
+        /sm-abcp-fj sm-abcp-fj 1 add def } loop
+      sm-abcp-fj sm-abcp-fma length ge { /sm-abcp-fj sm-abcp-fma length 1 sub def } if
+      sm-abcp-fm /ending get dup /span sm-abcp-fj sm-abcp-fmi sub 1 add put /closed sm-abcp-fcl put
+    } if
+  } for
+  % tuplet groups
+  0 1 sm-abcp-fvs length 1 sub { /sm-abcp-fsi exch def /sm-abcp-fprev null def
+    sm-abcp-fma { /staves get sm-abcp-fsi get /events get { /sm-abcp-fev exch def
+      sm-abcp-fev /tuplet known {
+        sm-abcp-fprev null eq { true } { sm-abcp-fprev /tuplet get /id get sm-abcp-fev /tuplet get /id get ne } ifelse
+        { sm-abcp-fev /tuplet get /first true put } { sm-abcp-fprev /tuplet get /last undef } ifelse
+        sm-abcp-fev /tuplet get /last true put
+        /sm-abcp-fprev sm-abcp-fev def
+      } { /sm-abcp-fprev null def } ifelse } forall } forall
+  } for
+} bind def
+
+% ================================================================ tunes
+% line sm-abcp-line -   (one line of a tune)
+/sm-abcp-line {
+  /sm-abcp-raw exch def
+  /sm-abcp-ln sm-abcp-raw sm-abcp-rtrim def
+  { sm-abcp-ln (%%) sm-abcp-pre {
+      sm-abcp-ln (%%score) sm-abcp-pre { sm-abcp-ln 7 sm-abcp-ch sm-abcp-isword not } { false } ifelse
+      sm-abcp-ln (%%staves) sm-abcp-pre { sm-abcp-ln 8 sm-abcp-ch sm-abcp-isword not } { false } ifelse or
+      { /sm-abcp-scoredir sm-abcp-ln def } if exit } if
+    sm-abcp-ln sm-abcp-ltrim (%) sm-abcp-pre { exit } if
+    /sm-abcp-fmok sm-abcp-ln length 2 ge { sm-abcp-ln 0 get sm-abcp-isalpha sm-abcp-ln 1 get 58 eq and } { false } ifelse def
+    sm-abcp-fmok { /sm-abcp-ff sm-abcp-ln 0 get def /sm-abcp-fv sm-abcp-ln 2 sm-abcp-tail def } if
+    sm-abcp-inhdr {
+      sm-abcp-fmok not { sm-abcp-ln sm-abcp-blank { exit } if /sm-abcp-inhdr false def } {
+        sm-abcp-ff sm-abcp-fv sm-abcp-trim sm-abcp-header
+        sm-abcp-ff 75 eq { /sm-abcp-inhdr false def sm-abcp-ensurevoice /sm-abcp-voice sm-abcp-voices 0 sm-abcp-lget def } if
+        exit } ifelse
+    } if
+    sm-abcp-ln sm-abcp-blank { exit } if
+    sm-abcp-voice null eq { sm-abcp-ensurevoice /sm-abcp-voice sm-abcp-voices 0 sm-abcp-lget def } if
+    sm-abcp-fmok {
+      /sm-abcp-v sm-abcp-voice def
+      sm-abcp-ff 119 eq { sm-abcp-fv sm-abcp-lyrics } if
+      sm-abcp-ff 86 eq { sm-abcp-fv sm-abcp-idrest sm-abcp-vprops sm-abcp-getvoice /sm-abcp-voice exch def } if
+      sm-abcp-ff 75 eq sm-abcp-ff 77 eq or sm-abcp-ff 76 eq or sm-abcp-ff 81 eq or sm-abcp-ff 80 eq or {
+        sm-abcp-ff sm-abcp-fv sm-abcp-inline } if
+      sm-abcp-ff 87 eq { sm-abcp-meta /words get sm-abcp-fv sm-abcp-text sm-abcp-lpush } if
+      sm-abcp-ff 84 eq { sm-abcp-meta /subtitles get sm-abcp-fv sm-abcp-trim sm-abcp-text sm-abcp-lpush } if
+      sm-abcp-ff 78 eq { sm-abcp-meta /notes get sm-abcp-fv sm-abcp-trim sm-abcp-text sm-abcp-lpush } if
+      exit } if
+    sm-abcp-ln sm-abcp-mline exit
+  } loop
+} bind def
+
+% [lines] tuneindex sm-abcp-tune score
+/sm-abcp-tune {
+  /sm-abcp-tno exch def /sm-abcp-lines exch def
+  /sm-abcp-warnpre (tune ) sm-abcp-tno 1 add sm-abcp-itoa sm-abcp-cat (: ) sm-abcp-cat def
+  /sm-abcp-meta << /title () /subtitles sm-abcp-lnew /composer () /origin () /area () /rhythm ()
+    /transcriber () /notes sm-abcp-lnew /history sm-abcp-lnew /source () /book () /words sm-abcp-lnew /rights () >> def
+  /sm-abcp-score << /meta sm-abcp-meta /tempo null /staves [] /group null
+    /initial << /key << /fifths 0 >> /time << /num 4 /den 4 >> >> /measures [] >> def
+  /sm-abcp-inhdr true def
+  /sm-abcp-mtr << /num 4 /den 4 /symbol (none-given) >> def
+  /sm-abcp-unitlen null def
+  /sm-abcp-key << /fifths 0 >> def
+  /sm-abcp-voices sm-abcp-lnew def /sm-abcp-voicebyid 16 dict def /sm-abcp-voice null def
+  /sm-abcp-scoredir () def /sm-abcp-tupid 0 def
+  sm-abcp-lines { sm-abcp-line } forall
+  sm-abcp-ensurevoice
+  sm-abcp-voices sm-abcp-larr { /cur get dup /events get /n get 0 gt {
+      dup /endBar get null eq { dup /endBar (single) put } if pop } { pop } ifelse } forall
+  sm-abcp-voices sm-abcp-larr { dup /cur get dup /events get /n get 0 gt {
+      exch /measures get exch sm-abcp-lpush } { pop pop } ifelse } forall
+  % initial key and meter: the header's
+  /sm-abcp-ik null def
+  sm-abcp-lines { dup (K:) sm-abcp-pre { 2 sm-abcp-tail sm-abcp-keytext pop /sm-abcp-ik exch def exit } { pop } ifelse } forall
+  sm-abcp-score /initial get /key sm-abcp-ik null eq { sm-abcp-key } { sm-abcp-ik } ifelse put
+  /sm-abcp-it << /num 0 /den 0 /symbol (none) >> def
+  sm-abcp-lines { dup (M:) sm-abcp-pre { 2 sm-abcp-tail sm-abcp-meter dup null eq { pop << /num 4 /den 4 >> } if
+      /sm-abcp-it exch def exit } if
+    (K:) sm-abcp-pre { exit } if } forall
+  sm-abcp-score /initial get /time sm-abcp-it put
+  sm-abcp-score /staves [ sm-abcp-voices sm-abcp-larr { /sm-abcp-sv exch def
+    << /id sm-abcp-sv /id get /name sm-abcp-sv /name get /clef sm-abcp-sv /clef get >> } forall ] put
+  sm-abcp-voices /n get 1 gt {
+    sm-abcp-score /group
+      sm-abcp-scoredir ({) sm-abcp-has
+      sm-abcp-voices /n get 2 eq { sm-abcp-voices 0 sm-abcp-lget /clef get /sign get (G) eq
+        sm-abcp-voices 1 sm-abcp-lget /clef get /sign get (F) eq and } { false } ifelse or
+      { (brace) } { (bracket) } ifelse put } if
+  [/subtitles /notes /history /words] { sm-abcp-meta exch 2 copy get sm-abcp-larr put } forall
+  sm-abcp-finalize
+  sm-abcp-score
+} bind def
+
+% text sm-abcp-lines [lines]   (\r\n and \r count as \n)
+/sm-abcp-splitlines {
+  /sm-abcp-sls exch def /sm-abcp-sll sm-abcp-lnew def /sm-abcp-slb 0 def /sm-abcp-sli 0 def
+  { sm-abcp-sli sm-abcp-sls length ge { exit } if
+    /sm-abcp-slc sm-abcp-sls sm-abcp-sli get def
+    sm-abcp-slc 10 eq sm-abcp-slc 13 eq or {
+      sm-abcp-sll sm-abcp-sls sm-abcp-slb sm-abcp-sli sm-abcp-sub sm-abcp-lpush
+      sm-abcp-slc 13 eq sm-abcp-sls sm-abcp-sli 1 add sm-abcp-ch 10 eq and { /sm-abcp-sli sm-abcp-sli 1 add def } if
+      /sm-abcp-slb sm-abcp-sli 1 add def } if
+    /sm-abcp-sli sm-abcp-sli 1 add def } loop
+  sm-abcp-sll sm-abcp-sls sm-abcp-slb sm-abcp-tail sm-abcp-lpush
+  sm-abcp-sll sm-abcp-larr
+} bind def
+
+% text sm-abcp-all [scores] [warnings]
+% text sm-abcp-tunelines [[lines of tune 1] ...]   (splitTunes)
+/sm-abcp-tunelines {
+  sm-abcp-splitlines /sm-abcp-alines exch def
+  /sm-abcp-atunes sm-abcp-lnew def /sm-abcp-acur null def
+  sm-abcp-alines { /sm-abcp-al exch def
+    sm-abcp-al (X:) sm-abcp-pre { /sm-abcp-acur sm-abcp-lnew def sm-abcp-atunes sm-abcp-acur sm-abcp-lpush } if
+    sm-abcp-acur null ne { sm-abcp-acur sm-abcp-al sm-abcp-lpush } if } forall
+  sm-abcp-atunes /n get 0 eq { [ sm-abcp-alines ] } { [ sm-abcp-atunes sm-abcp-larr { sm-abcp-larr } forall ] } ifelse
+} bind def
+
+% text sm-abcp-all [scores] [warnings]
+/sm-abcp-all {
+  sm-abcp-tunelines /sm-abcp-at2 exch def
+  /sm-abcp-warns sm-abcp-lnew def
+  [ 0 1 sm-abcp-at2 length 1 sub { sm-abcp-at2 1 index get exch sm-abcp-tune } for ]
+  sm-abcp-warns sm-abcp-larr
+} bind def
+
+% ================================================================ reader's annotations
+% %%annotation lines (src/index.js parseAnnotations), in the form the layout
+% takes as options /annotations: << /page /type /x /y /w /h /rgb /text >>.
+% Numbers are rounded as psLiteral writes them (num(): two decimals).
+/sm-abcp-colors << /red (#c0392b) /blue (#1f5fbf) /green (#2e7d32) /orange (#d35400)
+  /purple (#7b3fa0) /yellow (#e0b000) /black (#222222) >> def
+% x sm-abcp-num2 x'  : an integer stays one, else two decimals
+/sm-abcp-num2 { dup dup round eq { cvi } { 100 mul round 100 div } ifelse } bind def
+/sm-abcp-hexval { dup 48 ge 1 index 57 le and { 48 sub } { 32 or dup 97 ge 1 index 102 le and { 87 sub } { pop -1 } ifelse } ifelse } bind def
+% color sm-abcp-rgb [r g b]
+/sm-abcp-rgb {
+  sm-abcp-colors 1 index known { sm-abcp-colors exch get } if
+  /sm-abcp-hx exch def
+  sm-abcp-hx length 7 eq { sm-abcp-hx 0 get 35 eq } { false } ifelse
+  dup { 1 1 6 { sm-abcp-hx exch get sm-abcp-hexval 0 lt { pop false } if } for } if
+  { [ 0 1 2 { dup 2 mul 1 add sm-abcp-hx exch get sm-abcp-hexval 16 mul exch 2 mul 2 add sm-abcp-hx exch get sm-abcp-hexval add
+      255 div 1000 mul round 1000 div sm-abcp-num2 } for ] }
+  { [0.75 0.22 0.17] } ifelse
+} bind def
+% s sm-abcp-float x true | false   (parseFloat of a prefix)
+/sm-abcp-float {
+  sm-abcp-ltrim /sm-abcp-ps exch def /sm-abcp-pp 0 def
+  sm-abcp-ps 0 sm-abcp-ch dup 43 eq exch 45 eq or { /sm-abcp-pp 1 def } if
+  /sm-abcp-pq sm-abcp-ps sm-abcp-pp sm-abcp-digits def /sm-abcp-pnd sm-abcp-pq sm-abcp-pp sub def
+  sm-abcp-ps sm-abcp-pq sm-abcp-ch 46 eq {
+    /sm-abcp-pr sm-abcp-ps sm-abcp-pq 1 add sm-abcp-digits def
+    /sm-abcp-pnd sm-abcp-pnd sm-abcp-pr sm-abcp-pq sub 1 sub add def /sm-abcp-pq sm-abcp-pr def } if
+  sm-abcp-pnd 0 gt {
+    sm-abcp-ps sm-abcp-pq sm-abcp-ch dup 101 eq exch 69 eq or {
+      /sm-abcp-pr sm-abcp-pq 1 add def
+      sm-abcp-ps sm-abcp-pr sm-abcp-ch dup 43 eq exch 45 eq or { /sm-abcp-pr sm-abcp-pr 1 add def } if
+      sm-abcp-ps sm-abcp-pr sm-abcp-digits dup sm-abcp-pr gt { /sm-abcp-pq exch def } { pop } ifelse } if
+    sm-abcp-ps 0 sm-abcp-pq sm-abcp-sub
+    dup (.) sm-abcp-pre { (0) exch sm-abcp-cat } if
+    dup (-.) sm-abcp-pre { 1 sm-abcp-tail (-0) exch sm-abcp-cat } if
+    dup (+) sm-abcp-pre { 1 sm-abcp-tail dup (.) sm-abcp-pre { (0) exch sm-abcp-cat } if } if
+    dup dup length 1 sub get 46 eq { (0) sm-abcp-cat } if
+    cvr true
+  } { false } ifelse
+} bind def
+% line sm-abcp-annot dict|null
+/sm-abcp-annot {
+  /sm-abcp-as exch def
+  /sm-abcp-ap sm-abcp-as 0 sm-abcp-spaces def
+  sm-abcp-as sm-abcp-ap sm-abcp-tail (<!--) sm-abcp-pre {
+    /sm-abcp-ap sm-abcp-as sm-abcp-ap 4 add sm-abcp-spaces def } if
+  sm-abcp-as sm-abcp-ap sm-abcp-tail (%%annotation) sm-abcp-pre
+  { sm-abcp-as sm-abcp-ap 12 add sm-abcp-ch dup 32 eq exch 9 eq or } { false } ifelse not { null } {
+    sm-abcp-as sm-abcp-ap 12 add sm-abcp-tail sm-abcp-trim
+    dup length 3 ge { dup dup length 3 sub 3 getinterval (-->) eq { 0 1 index length 3 sub getinterval sm-abcp-rtrim } if } if
+    /sm-abcp-ab exch def /sm-abcp-akv 8 dict def /sm-abcp-ap 0 def
+    { sm-abcp-ap sm-abcp-ab length ge { exit } if
+      /sm-abcp-aw sm-abcp-ap def
+      { sm-abcp-ab sm-abcp-aw sm-abcp-ch sm-abcp-isword { /sm-abcp-aw sm-abcp-aw 1 add def } { exit } ifelse } loop
+      /sm-abcp-ae2 -1 def
+      sm-abcp-aw sm-abcp-ap gt { sm-abcp-ab sm-abcp-aw sm-abcp-ch 61 eq } { false } ifelse {
+        /sm-abcp-ak sm-abcp-aw 1 add def
+        sm-abcp-ab sm-abcp-ak sm-abcp-ch 34 eq {
+          % "..." with backslash escapes
+          /sm-abcp-asb sm-abcp-sbnew def /sm-abcp-aq sm-abcp-ak 1 add def
+          { sm-abcp-ab sm-abcp-aq sm-abcp-ch
+            dup -1 eq { pop /sm-abcp-aq -1 def exit } if
+            dup 34 eq { pop exit } if
+            dup 92 eq { pop sm-abcp-ab sm-abcp-aq 1 add sm-abcp-ch dup -1 eq { pop /sm-abcp-aq -1 def exit } if
+              sm-abcp-asb exch sm-abcp-sbputc /sm-abcp-aq sm-abcp-aq 2 add def }
+            { sm-abcp-asb exch sm-abcp-sbputc /sm-abcp-aq sm-abcp-aq 1 add def } ifelse } loop
+          sm-abcp-aq 0 ge { /sm-abcp-av sm-abcp-asb sm-abcp-sbstr def /sm-abcp-ae2 sm-abcp-aq 1 add def } if
+        } if
+        sm-abcp-ae2 0 lt {
+          /sm-abcp-aq sm-abcp-ak def
+          { sm-abcp-ab sm-abcp-aq sm-abcp-ch dup -1 eq exch sm-abcp-isspc or { exit } if /sm-abcp-aq sm-abcp-aq 1 add def } loop
+          sm-abcp-aq sm-abcp-ak gt { /sm-abcp-av sm-abcp-ab sm-abcp-ak sm-abcp-aq sm-abcp-sub sm-abcp-copy def /sm-abcp-ae2 sm-abcp-aq def } if
+        } if
+        sm-abcp-ae2 0 ge { sm-abcp-akv sm-abcp-ab sm-abcp-ap sm-abcp-aw sm-abcp-sub sm-abcp-av put } if
+      } if
+      /sm-abcp-ap sm-abcp-ae2 0 ge { sm-abcp-ae2 } { sm-abcp-ap 1 add } ifelse def
+    } loop
+    /sm-abcp-anum { % key default -> number
+      exch sm-abcp-akv exch 2 copy known { get sm-abcp-float { exch pop } if } { pop pop } ifelse } def
+    /sm-abcp-atype sm-abcp-akv /type known { sm-abcp-akv /type get } { () } ifelse def
+    sm-abcp-atype (circle) ne sm-abcp-atype (highlight) ne and { /sm-abcp-atype (text) def } if
+    /sm-abcp-acol sm-abcp-akv /color known { sm-abcp-akv /color get } { () } ifelse def
+    sm-abcp-acol length 0 eq { /sm-abcp-acol sm-abcp-atype (highlight) eq { (yellow) } { (red) } ifelse def } if
+    << /page /page 1 sm-abcp-anum round cvi 1 max
+       /type sm-abcp-atype /x /x 0 sm-abcp-anum sm-abcp-num2 /y /y 0 sm-abcp-anum sm-abcp-num2
+       /w /w 40 sm-abcp-anum sm-abcp-num2 /h /h 20 sm-abcp-anum sm-abcp-num2
+       /rgb sm-abcp-acol sm-abcp-rgb
+       /text sm-abcp-akv /text known { sm-abcp-akv /text get } { () } ifelse >>
+  } ifelse
+} bind def
+% text tune sm-abcp-annots [annotations of that tune]
+/sm-abcp-annots {
+  exch sm-abcp-tunelines dup length 2 index gt { exch get } { pop pop [] } ifelse
+  [ exch { sm-abcp-annot dup null eq { pop } if } forall ]
+} bind def
+
+% path sm-abcp-readfile text
+/sm-abcp-readfile {
+  (r) file /sm-abcp-rf exch def /sm-abcp-rsb sm-abcp-sbnew def
+  { sm-abcp-rf 65536 string readstring exch sm-abcp-rsb exch sm-abcp-sbputs not { exit } if } loop
+  sm-abcp-rf closefile
+  sm-abcp-rsb sm-abcp-sbstr
+} bind def
+
+% ================================================================ JSON
+/sm-abcp-jstr {
+  (") print /sm-abcp-js exch def /sm-abcp-jp 0 def
+  0 1 sm-abcp-js length 1 sub { /sm-abcp-ji exch def
+    /sm-abcp-jc sm-abcp-js sm-abcp-ji get def
+    sm-abcp-jc 34 eq sm-abcp-jc 92 eq or sm-abcp-jc 32 lt or {
+      sm-abcp-js sm-abcp-jp sm-abcp-ji sm-abcp-sub print
+      sm-abcp-jc 34 eq { (\\") print } { sm-abcp-jc 92 eq { (\\\\) print } {
+        (\\u00) print sm-abcp-jc 16 lt { (0) print } if sm-abcp-jc 16 4 string cvrs print } ifelse } ifelse
+      /sm-abcp-jp sm-abcp-ji 1 add def } if } for
+  sm-abcp-js sm-abcp-jp sm-abcp-tail print (") print
+} bind def
+% d sm-abcp-keys [sorted key strings]
+/sm-abcp-keys {
+  [ exch { pop dup type /nametype eq { dup length string cvs } { 24 string cvs } ifelse } forall ]
+  /sm-abcp-soa exch def
+  1 1 sm-abcp-soa length 1 sub { /sm-abcp-sox exch def
+    /sm-abcp-sov sm-abcp-soa sm-abcp-sox get def /sm-abcp-soy sm-abcp-sox 1 sub def
+    { sm-abcp-soy 0 lt { exit } if sm-abcp-soa sm-abcp-soy get sm-abcp-sov gt not { exit } if
+      sm-abcp-soa sm-abcp-soy 1 add sm-abcp-soa sm-abcp-soy get put /sm-abcp-soy sm-abcp-soy 1 sub def } loop
+    sm-abcp-soa sm-abcp-soy 1 add sm-abcp-sov put } for
+  sm-abcp-soa
+} bind def
+/sm-abcp-json {
+  dup type /dicttype eq {
+    ({) print dup sm-abcp-keys true exch {
+      exch not { (,) print } if dup sm-abcp-jstr (:) print 1 index exch cvn get sm-abcp-json false } forall
+    pop pop (}) print } {
+  dup type /arraytype eq 1 index type /packedarraytype eq or {
+    ([) print true exch { exch not { (,) print } if sm-abcp-json false } forall pop (]) print } {
+  dup type /stringtype eq { sm-abcp-jstr } {
+  dup type /nametype eq { dup length string cvs sm-abcp-jstr } {
+  dup null eq { pop (null) print } {
+  dup type /booleantype eq { { (true) } { (false) } ifelse print } {
+  dup type /integertype eq 1 index type /realtype eq or { 32 string cvs print } { pop (null) print } ifelse
+  } ifelse } ifelse } ifelse } ifelse } ifelse } ifelse
+} bind def
+
+end % sm-abcp-dict
+
+% ================================================================ public
+/sm-abc-warnings [] def
+/sm-abc-parse-all { sm-abcp-dict begin sm-abcp-all end userdict /sm-abc-warnings 3 -1 roll put } bind def
+/sm-abc-parse { sm-abc-parse-all 0 get } bind def
+/sm-abc-parse-file-all { sm-abcp-dict begin sm-abcp-readfile end sm-abc-parse-all } bind def
+/sm-abc-parse-file { sm-abc-parse-file-all 0 get } bind def
+/sm-abc-json { sm-abcp-dict begin sm-abcp-json end } bind def
+/sm-abc-annotations { sm-abcp-dict begin sm-abcp-annots end } bind def
+
+end % userdict
