@@ -20,6 +20,7 @@ time or a workaround; **low** = papercut.
 | 7 | tooling | low | The session's pscat MCP plugin was at 0.7.0-rc.1 while the latest release was rc.4, so its quick renders can differ from the pinned CLI. This project pins rc.4 in `pscat.lock.json`, and `.mcp.json` points at the vendored `pscat-mcp`. | not filed |
 | 8 | cli | low | `pscat --png out/x.png` fails if `out/` does not exist (`No such file or directory`); scripts must `mkdir -p` first. Ordinary for a CLI, noted for completeness. | not filed |
 | 9 | pdf | medium | `pdfmark` is undefined, so a program cannot set `/Subject`/`/Keywords`, write a non-ASCII title, or attach a file to the PDF (pscat does copy DSC `%%Title:`/`%%For:` into `/Title`/`/Author`). Workaround: `src/pdfmeta.js` appends a PDF incremental update with the source attachment and info after pscat writes the file. | [#1032](https://github.com/PSCatLabs/pscat/issues/1032) ([draft](issues/06-pdfmark.md)) |
+| 10 | files | low | `(path) status` answers `false` for a file that exists and opens (`pscat -e "(lib/sm_abc.ps) status ="`), so a program cannot test for an optional file before running it. Workaround: `lib/sm_abc.ps` loads the optional parser with `mark { (lib/sm_abc_parse.ps) run } stopped pop cleartomark`. | not filed yet ([draft](issues/07-status-on-filename.md)) |
 
 ## What worked well
 

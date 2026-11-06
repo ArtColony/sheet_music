@@ -75,15 +75,18 @@ engraves the Score that the JS parser wrote into the file (`psLiteral`); once
 `sm-abc-parse` is defined it parses the embedded ABC instead.
 
 From PostScript, by hand: `score sm-abc-engrave`, or `score << /paper /a4
-/staff-space 6 /breaks (auto) >> sm-abc-engrave`; with the parser loaded,
-`(song.abc) sm-abc-engrave-file`. See the header of `lib/sm_abc.ps`.
+/staff-space 6 /breaks (auto) >> sm-abc-engrave`; and, once the PostScript
+parser exists, `(lib/sm_engrave.ps) run (lib/sm_abc.ps) run (song.abc)
+sm-abc-engrave-file` (it loads `lib/sm_abc_parse.ps` itself). See the header
+of `lib/sm_abc.ps`. `%%transpose` is ignored by this engine (with a warning).
 
 It covers everything the JS layout draws: title block, tempo, clefs, key and
 time signatures (also mid-line changes), spacing, line and page breaks, stems,
 beams, chords, accidentals, ledger lines, dots, rests, multi-measure rests,
 bars, repeats, voltas, chord symbols, text annotations, decorations, dynamics,
 hairpins, slurs, ties, tuplets, grace notes, lyrics, several staves, the footer
-and `%%annotation` marks; every sample matches the JS engraver at 300 dpi.
+and `%%annotation` marks; every sample is identical to the JS engraver's at
+300 dpi, or within anti-aliasing.
 Transposition, playback/MIDI, share links and the editor's live preview
 stay on the JS engraver, which remains the reference.
 

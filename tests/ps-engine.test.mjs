@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { selfContainedPS, END_MARK } from '../src/psdoc.js';
+import { toPostScript } from '../src/index.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const engraveLib = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
@@ -71,4 +72,25 @@ test('PostScript engraver: CLI and WebAssembly agree, PDFs reproduce, goldens ma
     if (plat && plat[f]) assert.equal(sha(p1), plat[f], `${f}: PDF bytes changed on ${PLATFORM}`);
     else console.log(`ps-engine pdf ${PLATFORM} ${f} ${sha(p1)} (no golden for this platform)`);
   }
+});
+
+test('PostScript engraver: a long score breaks into the same pages as the JS engraver', { skip: !existsSync(PSCAT) && 'pscat CLI not installed (npm run pscat:fetch)' }, async () => {
+  // twinkle's three lines, twelve times over, with W: words after the tune
+  const tw = readFileSync(path.join(root, 'samples/twinkle.abc'), 'utf8').trimEnd().split('\n');
+  const k = tw.findIndex((l) => l.startsWith('K:'));
+  const body = tw.slice(k + 1).join('\n').replace(/\|\]/g, '|');
+  const src = [...tw.slice(0, k + 1), ...Array(12).fill(body), 'W:Words after the tune, on the last page.', ''].join('\n');
+  const js = toPostScript(src, { lib: engraveLib });
+  assert.ok(js.pages > 1, 'the test score should need several pages');
+  const { ps, size } = doc(src);
+  const psFile = path.join(tmp, 'long.ps');
+  writeFileSync(psFile, ps);
+  const out = path.join(tmp, 'long.pdf');
+  execFileSync(PSCAT, ['--lint-strict', '--page', `${Math.round(size[0])}x${Math.round(size[1])}`, '--pdf', out, psFile], { stdio: 'pipe' });
+  const p1 = readFileSync(out);
+  assert.equal(pages(p1), js.pages, 'page count differs from the JS engraver');
+  const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
+  const r = await createRenderer();
+  r.render(ps, { width: size[0], height: size[1], pdf: true });
+  assert.ok(Buffer.from(r.pdf()).equals(p1), 'WebAssembly PDF differs from the CLI\'s');
 });

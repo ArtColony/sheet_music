@@ -16,16 +16,20 @@
 %       /margin /top /bottom   page margins in points (50, 46, 44)
 %       /annotations  reader's marks, see below
 %     Draws every page and ends each with showpage.
-%   (song.abc) sm-abc-engrave-file -       read, parse (needs sm-abc-parse), engrave
-%   (song.abc) options sm-abc-engrave-file -
+%   (song.abc) sm-abc-engrave-file -       read, parse with sm-abc-parse, engrave
+%   (song.abc) options sm-abc-engrave-file -   (options also take /tune, 0-based)
 %   abc-string [options] sm-abc-engrave-string -
+%     These run lib/sm_abc_parse.ps (relative to the current directory) when
+%     sm-abc-parse is not defined yet. Parser contract: (abc) sm-abc-parse
+%     gives a Score, an array of Scores, or << /scores [...] /annotations [...] >>.
 %   file (marker) sm-abc-readsrc string    read lines of file up to a line equal to marker
 %   x sm-r2 x'                             round to 2 decimals (all drawn positions go through it)
 %
-% One-liners:
-%   (lib/sm_engrave.ps) run (lib/sm_abc_parse.ps) run (lib/sm_abc.ps) run
-%   (song.abc) sm-abc-engrave-file
-% and render with `pscat --pdf song.pdf --page 612x792 that.ps`.
+% One-liner (from the repository root; the parser is loaded on demand):
+%   (lib/sm_engrave.ps) run (lib/sm_abc.ps) run (song.abc) sm-abc-engrave-file
+% rendered with `pscat --pdf song.pdf --page 612x792 that.ps` (595x842 for /a4).
+% A score built by hand: << ... >> sm-abc-engrave, in the psLiteral structure
+% (see src/score.js for the fields).
 %
 % Units as in src/layout.js: sp = staff space (points); a vertical "pos" is
 % staff steps from the centre line, y = centre + pos * sp / 2.
@@ -33,8 +37,8 @@
 % start with sm-ae-. Per-event layout results are stored in the event dicts
 % under sm- keys (the Score dicts are never begun: their keys include /type).
 %
-% Covers everything src/layout.js draws (the JS engraver is the reference
-% and every sample matches it at 300 dpi): title block, tempo, clef/key/time
+% Covers everything src/layout.js draws (the JS engraver is the reference;
+% every sample is identical to it at 300 dpi, or within anti-aliasing): title block, tempo, clef/key/time
 % (also mid-line changes), proportional spacing with lyric/chord/dynamic
 % collision checks, source or automatic line breaks and justification, page
 % breaks, stems, flags, beams (the Score's grouping), chords and seconds,
@@ -1601,11 +1605,18 @@ end % sm-ae-dict
 % abc-text [options] -> : parse with lib/sm_abc_parse.ps and engrave
 /sm-abc-engrave-string {
   dup type /dicttype eq { } { 0 dict } ifelse
-  /sm-abc-parse where { pop } { (sm-abc-engrave: lib/sm_abc_parse.ps is not loaded) print flush /sm-abc-parse /undefined signalerror } ifelse
-  dup /tune known { dup /tune get } { 0 } ifelse 3 -1 roll sm-abc-parse
-  % the parser may give a Score, a list of Scores or << /scores [...] >>
-  dup type /dicttype eq { dup /scores known { /scores get } if } if
-  dup type /arraytype eq { exch get } { exch pop } ifelse
+  % the parser: already loaded (a self-contained file), else lib/sm_abc_parse.ps
+  % relative to the current directory, as in the one-liner above
+  /sm-abc-parse where { pop } { mark { (lib/sm_abc_parse.ps) run } stopped pop cleartomark } ifelse
+  /sm-abc-parse where { pop } { (sm-abc-engrave-string: sm-abc-parse is not defined; load lib/sm_abc_parse.ps) = } ifelse
+  exch sm-abc-parse                                   % options result
+  % the parser may give a Score, a list of Scores or << /scores [...] >>; a
+  % result's /annotations (%%annotation lines) are drawn unless options has its own
+  dup type /dicttype eq {
+    dup /annotations known 2 index /annotations known not and { 1 index /annotations 2 index /annotations get put } if
+    dup /scores known { /scores get } if
+  } if
+  dup type /arraytype eq { 1 index /tune known { 1 index /tune get } { 0 } ifelse get } if
   exch sm-abc-engrave
 } bind def
 % (path) [options] -> : read an ABC file and engrave it

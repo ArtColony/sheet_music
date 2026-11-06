@@ -11,6 +11,7 @@ import { parse, parseAnnotations } from './index.js';
 import { splitTunes } from './abc.js';
 import { PAPERS } from './layout.js';
 import { psLiteral } from './ps.js';
+import { sourceTranspose } from './transpose.js';
 
 export const END_MARK = '%%SM-ABC-END';
 const dscText = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '?');
@@ -32,6 +33,11 @@ export function selfContainedPS(src, options = {}) {
   // reader's %%annotation marks: drawn by sm-abc-engrave from its options
   const tuneSrc = parsed.format === 'abc' ? splitTunes(src)[tune] || '' : src;
   const annotations = parseAnnotations(tuneSrc).map((a) => ({ page: a.page, type: a.type, x: a.x, y: a.y, w: a.w, h: a.h, rgb: a.rgb, text: a.text }));
+  const warnings = [...parsed.warnings];
+  const head = parsed.format === 'abc' && /^X:/m.exec(src);
+  if (sourceTranspose(tuneSrc) || (head && sourceTranspose(src.slice(0, head.index)))) {
+    warnings.push('%%transpose is ignored by the PostScript engraver (leave out --engine ps to transpose)');
+  }
   const paper = PAPERS[options.paper] ? options.paper : 'letter';
   const [W, H] = PAPERS[paper];
   const opts = { paper: `/${paper}`, 'staff-space': options.sp || 5.5, breaks: options.breaks || 'source', tune, format: parsed.format };
@@ -69,5 +75,5 @@ export function selfContainedPS(src, options = {}) {
     '%%EOF',
     '',
   ].filter((l) => l !== null);
-  return { ps: lines.join('\n'), size: [W, H], title, composer: score.meta.composer || '', format: parsed.format, warnings: parsed.warnings };
+  return { ps: lines.join('\n'), size: [W, H], title, composer: score.meta.composer || '', format: parsed.format, warnings };
 }
