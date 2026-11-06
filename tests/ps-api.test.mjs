@@ -132,12 +132,12 @@ test('sm-abc-list-file and sm-abc-check-file output', { skip }, () => {
   ]);
 });
 
-test('every ABC sample checks clean except the known short bar in feature-tour', { skip }, () => {
+test('every ABC sample checks clean', { skip }, () => {
   const files = readdirSync(path.join(root, 'samples')).filter((f) => f.endsWith('.abc')).sort();
   const prog = '(lib/sheet.ps) run\n' + files.map((f) => `(samples/${f}) sm-abc-check-file`).join('\n') + DOT;
   const out = pscat(prog).out;
   assert.equal(out.match(/^sm-abc: warning/gm), null);
-  assert.deepEqual(out.match(/^sm-abc: bar .*$/gm), ['sm-abc: bar 10: 7/8 of a whole note, M:3/4 wants 3/4']);
+  assert.equal(out.match(/^sm-abc: bar .*$/gm), null);
 });
 
 test('docs/postscript-api.md: the glyph example renders', { skip }, () => {
