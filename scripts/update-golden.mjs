@@ -30,7 +30,7 @@ for (const f of readdirSync(path.join(root, 'samples')).filter((x) => /\.(abc|mu
 }
 // The PostScript engraver's self-contained documents (tests/ps-engine.test.mjs)
 const ABC_LIB = readFileSync(path.join(root, 'lib/sm_abc.ps'), 'utf8');
-const PS_ENGINE_SAMPLES = ['amazing-grace.abc', 'ode-to-joy.abc', 'twinkle.abc'];
+const PS_ENGINE_SAMPLES = Object.keys(out.ps);
 out.psEngine = { ps: {}, pdf: {} };
 const pePdfs = {};
 for (const f of PS_ENGINE_SAMPLES) {

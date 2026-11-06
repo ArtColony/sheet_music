@@ -7,12 +7,13 @@
 // parses it; otherwise it engraves the Score literal the JS parser wrote
 // (src/ps.js psLiteral), which is embedded as a fallback. Either way the
 // layout and drawing are lib/sm_abc.ps's.
-import { parse } from './index.js';
+import { parse, parseAnnotations } from './index.js';
+import { splitTunes } from './abc.js';
 import { PAPERS } from './layout.js';
 import { psLiteral } from './ps.js';
 
 export const END_MARK = '%%SM-ABC-END';
-const dscText = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7e]/g, '?');
+const dscText = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '?');
 
 /**
  * options: engraveLib (lib/sm_engrave.ps text, required), abcLib
@@ -28,12 +29,16 @@ export function selfContainedPS(src, options = {}) {
   const score = parsed.scores[tune];
   if (!score) throw Error(`no tune number ${tune + 1} (the input has ${parsed.scores.length})`);
   if (src.split(/\r?\n/).some((l) => l === END_MARK)) throw Error(`the source contains the line ${END_MARK}`);
+  // reader's %%annotation marks: drawn by sm-abc-engrave from its options
+  const tuneSrc = parsed.format === 'abc' ? splitTunes(src)[tune] || '' : src;
+  const annotations = parseAnnotations(tuneSrc).map((a) => ({ page: a.page, type: a.type, x: a.x, y: a.y, w: a.w, h: a.h, rgb: a.rgb, text: a.text }));
   const paper = PAPERS[options.paper] ? options.paper : 'letter';
   const [W, H] = PAPERS[paper];
   const opts = { paper: `/${paper}`, 'staff-space': options.sp || 5.5, breaks: options.breaks || 'source', tune, format: parsed.format };
   const optLit = '<< /paper /' + paper + ' /staff-space ' + psLiteral(opts['staff-space'])
     + ' /breaks ' + psLiteral(opts.breaks) + ' /tune ' + tune + ' /format ' + psLiteral(parsed.format)
-    + (options.footer !== undefined ? ' /footer ' + psLiteral(String(options.footer)) : '') + ' >>';
+    + (options.footer !== undefined ? ' /footer ' + psLiteral(String(options.footer)) : '')
+    + (annotations.length ? ' /annotations ' + psLiteral(annotations) : '') + ' >>';
   const title = score.meta.title || 'Untitled';
   const embed = options.embedScore !== false;
   const lines = [

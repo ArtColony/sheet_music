@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,7 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const golden = JSON.parse(readFileSync(path.join(root, 'tests/golden.json'), 'utf8'));
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
 const PLATFORM = `${process.platform}-${process.arch}`;
-export const PS_ENGINE_SAMPLES = ['amazing-grace.abc', 'ode-to-joy.abc', 'twinkle.abc'];
+const PS_ENGINE_SAMPLES = readdirSync(path.join(root, 'samples')).filter((f) => /\.(abc|musicxml)$/.test(f)).sort();
 const pages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
 // the golden document never depends on whether lib/sm_abc_parse.ps exists yet
 const doc = (src, extra = {}) => selfContainedPS(src, { engraveLib, abcLib, ...extra });
@@ -34,7 +34,7 @@ test('self-contained .ps: deterministic text, source verbatim after the driver',
     const src = readFileSync(path.join(root, 'samples', f), 'utf8');
     const a = doc(src), b = doc(src);
     assert.equal(a.ps, b.ps);
-    assert.ok(a.ps.includes(`(${END_MARK}) sm-abc-readsrc\n${src.trimEnd()}\n${END_MARK}\n`), `${f}: source is embedded verbatim`);
+    assert.ok(a.ps.includes(`(${END_MARK}) sm-abc-readsrc\n${src.replace(/\r\n?/g, '\n').trimEnd()}\n${END_MARK}\n`), `${f}: source is embedded verbatim`);
     assert.equal(sha(a.ps), golden.psEngine && golden.psEngine.ps[f], `${f}: PostScript changed; if intended run node scripts/update-golden.mjs`);
   }
 });

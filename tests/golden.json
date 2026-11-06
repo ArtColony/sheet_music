@@ -37,13 +37,25 @@
   },
   "psEngine": {
     "ps": {
-      "amazing-grace.abc": "9ad2551af6349caa725bc61ec77d932fb4586c21fe90b81b4e8be4c70cc242e9",
-      "ode-to-joy.abc": "ebc376b2363b0bf7ba6d819aebd3ec13a3bb8d7a1ab619abc632eb2c19e22d02",
-      "twinkle.abc": "b580133db6fba6866768f4d8b81eeff60096fd70cf10d39f5c4260ed56941062"
+      "amazing-grace.abc": "68a829fab2cadb99f829c76b3bb7477367808fcbee0d97fef566d9049f636af1",
+      "camptown-races.abc": "34769bec3e9c8434542406c88c903e4981e5d718c7e7a5e5b596a4316a66f2ce",
+      "drunken-sailor.abc": "b92b26a6a3b8a698b8dda05b15d12a65922018f3eaec5162e103965bf8b80a4a",
+      "feature-tour.abc": "d80332ba5251a4d5bac0b3f60d638a1b57df6acd892c00130c481c8f8e6b281b",
+      "frere-jacques.musicxml": "a116d9e1b0b18fae5a0707ea69f73a00aa91b19ceb5558857cd9a5b947a2a0dd",
+      "greensleeves.abc": "bd3417a9772b7998b4d542076c3ab70dfca75d0aa46fe18bc63e3d4655ed3a68",
+      "mountain-king.abc": "4aa3ec5bc9ee6cd92b451f29fe426a408ff4d8e17f06720f4a5b922c550e857e",
+      "ode-to-joy.abc": "be5f6f71408a345d97b4629c57c4bf5296c48059ae985688578057ead6d3336b",
+      "twinkle.abc": "172d29498ed70b3b53bed4fcf68a81e0abc10c5a58a10baff1def7052bfbdf1c"
     },
     "pdf": {
       "darwin-arm64": {
         "amazing-grace.abc": "e747da7feeed3c297ce9e9f93c90bd8820d791643de9c0c5e5889420fb1558a3",
+        "camptown-races.abc": "ed82bf59acae51c64dcdc3a03540b08464cb907f52c5876848c5b5d87d710d26",
+        "drunken-sailor.abc": "e8d6d62d43b2f526a6608d8c4bc2053fe152d62dbc08e1fe30e5c13207d6fd6a",
+        "feature-tour.abc": "54b2ed0944afd54ea28fccaa6ab439259dd09531314204f9dc73e02955a4b2d6",
+        "frere-jacques.musicxml": "ca724831402d0587727d8875444bea0af0a8bdb686662a22cdd9d4beef49a3ac",
+        "greensleeves.abc": "118fd13fffe19a0cc290408a01adc028bb950637045f27890be98d0f4c574360",
+        "mountain-king.abc": "0438b70512e05363da272319e64663140d1cf0693211de74771664490bb1acc1",
         "ode-to-joy.abc": "97beff3dfc2bf6054113510ab9c09a5e5f832bfa8071d204eb2d6e4ad5290448",
         "twinkle.abc": "ac90f7aeb4cfef7beb7b6d0fa2d813058f3c33d3aa52c15866803c332710346e"
       }

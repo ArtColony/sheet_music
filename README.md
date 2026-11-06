@@ -78,13 +78,13 @@ From PostScript, by hand: `score sm-abc-engrave`, or `score << /paper /a4
 /staff-space 6 /breaks (auto) >> sm-abc-engrave`; with the parser loaded,
 `(song.abc) sm-abc-engrave-file`. See the header of `lib/sm_abc.ps`.
 
-It covers the title block, tempo, clefs, key and time signatures (also
-mid-line changes), proportional spacing, line and page breaks, stems, flags,
-beams, chords, accidentals, ledger lines, dots, rests, multi-measure rests, bar
-lines, repeats, voltas, chord symbols, lyrics with hyphens and extenders, ties,
-several staves with a brace or bracket, and the footer. Slurs, tuplets, grace
-notes, decorations, dynamics, hairpins and `%%annotation` marks are still JS
-only. Transposition, playback/MIDI, share links and the editor's live preview
+It covers everything the JS layout draws: title block, tempo, clefs, key and
+time signatures (also mid-line changes), spacing, line and page breaks, stems,
+beams, chords, accidentals, ledger lines, dots, rests, multi-measure rests,
+bars, repeats, voltas, chord symbols, text annotations, decorations, dynamics,
+hairpins, slurs, ties, tuplets, grace notes, lyrics, several staves, the footer
+and `%%annotation` marks; every sample matches the JS engraver at 300 dpi.
+Transposition, playback/MIDI, share links and the editor's live preview
 stay on the JS engraver, which remains the reference.
 
 ## The editor
