@@ -170,6 +170,8 @@ prints nothing when `options` has `/quiet true`.
 | `sm-abc-check-file` | `(song.abc) sm-abc-check-file –` | the list, every warning, bars whose length disagrees with the meter, a summary, and `sm-abc: ok` when there is nothing to fix |
 | `sm-abc-check-string` | `(abc text) sm-abc-check-string –` | the same |
 
+The check prints a `sm-abc: /tune N:` header before each tune's bar notes in a file with several tunes; the parser's own warnings count tunes from 1 (`tune 1:` is `/tune 0`).
+
 The check and list procedures draw nothing. Under `--lint-strict` a program
 that draws nothing fails as a blank page, so paint a dot:
 `... sm-abc-check-file 0 0 1 1 rectfill showpage`.

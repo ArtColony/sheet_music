@@ -189,7 +189,7 @@ sm-sheet-dict begin
   sm-abc-warnings { (sm-abc: warning: ) print = } forall
   /sm-sh-nb 0 def
   0 1 sm-sh-ss length 1 sub { /sm-sh-ti exch def
-    sm-sh-ss length 1 gt { (sm-abc: tune ) print sm-sh-ti 1 add sm-sh-cvs print (:) = } if
+    sm-sh-ss length 1 gt { (sm-abc: /tune ) print sm-sh-ti sm-sh-cvs print (:) = } if
     sm-sh-ss sm-sh-ti get sm-sh-bars /sm-sh-nb exch sm-sh-nb add def
   } for
   (sm-abc: check: ) print sm-sh-ss length sm-sh-cvs print ( tune\(s\), ) print

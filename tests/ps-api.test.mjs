@@ -24,11 +24,16 @@ const pages = (pdf) => (pdf.toString('latin1').match(/\/Type\s*\/Page[^s]/g) || 
 
 // Run a program file with pscat in cwd; returns { out, pdf } (what it printed, PDF bytes).
 let runs = 0;
-function pscat(prog, { cwd = root, page = '612x792', env } = {}) {
+// The environment drops PSCAT_LIB and PSCAT_HOME, so a developer's own
+// settings do not change what lib/ resolves to; confine: true adds
+// --read-root cwd, which also hides an install in pscat's per-user lib/.
+const cleanEnv = (env) => { const e = { ...process.env, ...env }; for (const k of ['PSCAT_LIB', 'PSCAT_HOME']) if (!env || !(k in env)) delete e[k]; return e; };
+function pscat(prog, { cwd = root, page = '612x792', env, confine = false } = {}) {
   const file = path.join(tmp, `p${++runs}.ps`);
   const pdf = path.join(tmp, `p${runs}.pdf`);
   writeFileSync(file, prog);
-  const r = spawnSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', pdf, file], { cwd, encoding: 'utf8', timeout: 60000, env: { ...process.env, ...env } });
+  const args = ['--lint-strict', '--page', page, '--pdf', pdf, ...(confine ? ['--read-root', cwd] : []), file];
+  const r = spawnSync(PSCAT, args, { cwd, encoding: 'utf8', timeout: 60000, env: cleanEnv(env) });
   if (r.status !== 0) throw Error(`pscat failed (${r.status}):\n${r.stdout}\n${r.stderr}`);
   // the program's output, without pscat's own "pscat: wrote ..." lines
   return { out: r.stdout.replace(/^pscat: .*\n/gm, ''), pdf: readFileSync(pdf) };
@@ -72,11 +77,12 @@ test('one-liners from another directory: /sm-lib-dir, PSCAT_LIB, a .sheet-music 
   mkdirSync(path.join(proj, '.sheet-music'), { recursive: true });
   for (const f of readdirSync(path.join(root, 'lib')).filter((f) => f.endsWith('.ps'))) copyFileSync(path.join(root, 'lib', f), path.join(proj, '.sheet-music', f));
   copyFileSync(song, path.join(proj, 'song.abc'));
-  r = pscat('(.sheet-music/sheet.ps) run sm-lib-dir = (song.abc) sm-abc-engrave-file\n', { cwd: proj });
+  r = pscat('(.sheet-music/sheet.ps) run sm-lib-dir = (song.abc) sm-abc-engrave-file\n', { cwd: proj, confine: true });
   assert.equal(r.out, '.sheet-music/\n');
   assert.equal(pages(r.pdf), 1);
   // 4. nothing to find: a clear message, then an error
-  const bad = spawnSync(PSCAT, ['--pdf', path.join(tmp, 'bad.pdf'), '-e', `${lit(LIB + 'sheet.ps')} run`], { cwd: other, encoding: 'utf8', timeout: 60000 });
+  writeFileSync(path.join(other, 'sheet.ps'), readFileSync(path.join(root, 'lib/sheet.ps')));
+  const bad = spawnSync(PSCAT, ['--pdf', path.join(tmp, 'bad.pdf'), '--read-root', other, '-e', '(sheet.ps) run'], { cwd: other, encoding: 'utf8', timeout: 60000, env: cleanEnv() });
   assert.notEqual(bad.status, 0);
   assert.match(bad.stdout, /sm-abc: error: cannot find sm_engrave.ps; define \/sm-lib-dir/);
 });

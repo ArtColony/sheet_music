@@ -1,12 +1,12 @@
 ---
 name: ps-sheet-music
-description: Write music as ABC notation and engrave it to PDF/PNG with only pscat (the CLI or the pscat MCP tools), using the sheet_music PostScript library. Use when asked to notate, transcribe, arrange, typeset or render sheet music, lead sheets, hymns, folk tunes, exercises or worksheets, to check or fix a score, or to draw custom notation (staves, clefs, notes) in PostScript, and no Node toolchain is at hand.
+description: Write music as ABC notation and engrave it to PDF/PNG with only pscat (the CLI or the pscat MCP tools), using the sheet_music PostScript library. Use when asked to notate, transcribe, arrange, typeset or render sheet music, lead sheets, hymns, folk tunes, exercises or worksheets, to check or fix a score, or to draw custom notation (staves, clefs, notes) in PostScript. Everything runs in pscat: no checkout, build or other tools.
 ---
 
 # Sheet music with pscat alone
 
 ABC text → `lib/sheet.ps` (parser, layout and glyphs, all PostScript) →
-pscat → PDF/PNG. Nothing else runs: no Node, no network, no music font.
+pscat → PDF/PNG. Nothing else runs: no build step, no network, no music font.
 
 ## Find the library
 
@@ -58,8 +58,15 @@ Copy the library into the project once:
 mkdir -p .sheet-music && cp LIB/*.ps .sheet-music/
 ```
 
-then start every program with `(.sheet-music/sheet.ps) run`. It finds its
-siblings in `.sheet-music/` by itself. `render_postscript` takes `width` and
+then start every program with
+
+```postscript
+/sm-lib-dir (.sheet-music/) def (.sheet-music/sheet.ps) run
+```
+
+Name the directory explicitly: without `sm-lib-dir`, `sheet.ps` tries a
+`lib/` folder first (the project's, `$PSCAT_LIB`, pscat's per-user `lib/`)
+and could pair this `sheet.ps` with an older copy of its siblings. `render_postscript` takes `width` and
 `height` (the page size) and `dpi`, and returns PNGs. With `format: "pdf"` and
 an `out_path` (inside the project, not in a dot-directory) it writes a PDF.
 `eval_postscript` returns what the program printed, which is what you want
@@ -77,7 +84,7 @@ for checks.
 
    ```postscript
    %!PS
-   (.sheet-music/sheet.ps) run
+   /sm-lib-dir (.sheet-music/) def (.sheet-music/sheet.ps) run
    << /paper /letter >> sm-abc-engrave-here
    X:1
    T:Title
@@ -95,7 +102,7 @@ for checks.
    happy):
 
    ```postscript
-   (.sheet-music/sheet.ps) run
+   /sm-lib-dir (.sheet-music/) def (.sheet-music/sheet.ps) run
    sm-abc-here
    X:1
    ...the tune...
@@ -224,6 +231,9 @@ data directory (`pscat fonts list` prints `install directory:
 mkdir -p "<data-dir>/lib" && cp LIB/*.ps "<data-dir>/lib/"
 ```
 
-Then `(lib/sheet.ps) run` works from any directory, in a project with no
-`lib/` folder of its own (a project `lib/` is searched first). With the CLI
-only, `PSCAT_LIB=LIB` does the same for one directory.
+Then `(lib/sheet.ps) run` should work from any directory, in a project with
+no `lib/` folder of its own (a project `lib/` is searched first). pscat 0.7
+resolves `lib/` names there for both the CLI and the MCP tools (checked with
+a probe file; this is not a documented pscat feature yet). Ask the user
+before writing there: it changes what every pscat program on the machine
+sees. With the CLI only, `PSCAT_LIB=LIB` does the same for one directory.
