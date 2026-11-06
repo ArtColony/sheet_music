@@ -106,7 +106,7 @@ export function psLiteral(v) {
     }
     return s + ')';
   }
-  if (Array.isArray(v)) return '[' + v.map(psLiteral).join(' ') + ']';
+  if (Array.isArray(v)) return '[' + Array.from(v, (x) => psLiteral(x === undefined ? null : x)).join(' ') + ']'; // holes -> null, as in JSON
   const keys = Object.keys(v).filter((k) => v[k] !== undefined).sort();
   return '<<' + keys.map((k) => ` /${k} ${psLiteral(v[k])}`).join('') + ' >>';
 }

@@ -91,3 +91,10 @@ test('PostScript viewer highlighting', async () => {
   assert.match(h, /<span class="c">% title<\/span>/);
   assert.equal(highlight('a < b'), 'a &lt; b');
 });
+
+test('psLiteral writes array holes as null, like JSON', async () => {
+  const { psLiteral } = await import('../src/ps.js');
+  const a = []; a[1] = 'x';
+  assert.equal(psLiteral(a), '[null (x)]');
+  assert.equal(psLiteral({ b: 1, a: [1, 2], u: undefined }), '<< /a [1 2] /b 1 >>');
+});
