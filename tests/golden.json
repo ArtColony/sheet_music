@@ -1,38 +1,38 @@
 {
   "pscat": "0.7.0-rc.4",
   "ps": {
-    "amazing-grace.abc": "3407efae1d7c77124e6d244b0724df03030e9d772774984ec794e4d85b6023c8",
-    "camptown-races.abc": "a1a488e75356b440858843b1c0f3bab0b295abe42507bd9a5a6f28761fef5f26",
-    "drunken-sailor.abc": "851dc05135b937415bba400780d087a5e4998ffb208870bafb665d07f2dce5ef",
-    "feature-tour.abc": "5ee7fe51e543c6d4b5a9c77e73281e2ae6d5fbae6bcdfcec5908e3b5126215b6",
-    "frere-jacques.musicxml": "d4c16b9f4a23bef178583c6ee9b75d39893bcc107db28d3284c4c4f88d8a9a83",
-    "greensleeves.abc": "27113c7fac3c31e4cabed26bfb1ad07ee49c0c05e090b738ce2fbdfdaaf75f21",
-    "mountain-king.abc": "03959e5768599f09b96f3f5c63db25d9e3c4fe7d44a769ce98f8864e842cb176",
-    "ode-to-joy.abc": "3de7ced0ecd0355475276bc63c2d294fbf9ecf20077c6f2af8639c6415a3f32c",
-    "twinkle.abc": "166a504cb4921308bec15cd4b7d6a20801e56ac8f04f6e0819af1c195a1a7bff"
+    "amazing-grace.abc": "367b83e34c83c8f25087e969a0d34cd6c714235e6aa969131b7d2abc0dd7eecc",
+    "camptown-races.abc": "b0ad8f8d73c54258ccea55aa2b36d0b8b9467d84c87d3e962bc79b24a930c33a",
+    "drunken-sailor.abc": "9fbc93068eb6c5c4a89009f279a4265f959981283486df28584e6da650fadd77",
+    "feature-tour.abc": "e8bd08fbf4bc862266d48192fca2a2eeec8b569364a375acabf03780da7de011",
+    "frere-jacques.musicxml": "a29d2911b9c6e33145f8f5a8796956e1d13c9aeaa79504a237b9f30cb16e862a",
+    "greensleeves.abc": "7d1b1d0f6c32d90d57eeffff8da5ede6c60bf9d339c6c7f2b8b0263aa85ffa13",
+    "mountain-king.abc": "5c72a554b5967fcbc6a17ae7ae8253eea2f43f368a95d5483040b86135670e20",
+    "ode-to-joy.abc": "01cb2331a2accabad08755b990fc2dbaceb72778078ff9fccb869ba3bdd5d800",
+    "twinkle.abc": "30f50eed4da59c06f944fdddc14ca681c2d031d55f06278a101dc4c8d8bce732"
   },
   "pdf": {
     "darwin-arm64": {
-      "amazing-grace.abc": "e0e406153fed12d8c89e2cd750932b06fd44dab115272fe3c822a148894b469d",
-      "camptown-races.abc": "775ff95561f5752be2542043b54cf86d3d66dd0bd94479d95beedb0196f54121",
-      "drunken-sailor.abc": "0ef3e25c77370dd20730aa2e6a487b3c20d93f5ae30491016704b3afafc1ac9c",
-      "feature-tour.abc": "4bc46d820536037b63a829b17e2f086e7b287bc1e6a90b8485d4dcf12492bb61",
-      "frere-jacques.musicxml": "72bc26891a04c0e2e217d822d6cd921a7c0b9331e471986b5f4816f17dec1225",
-      "greensleeves.abc": "5574115661e21d902bb7de616dd479514c0cade02714d4947ea0437c18b1992f",
+      "amazing-grace.abc": "50c97b16f3834f8148eb87f03cf78a8529599251eb71f441c01a1ee861c7f7c6",
+      "camptown-races.abc": "64439fa8204c5d2a3edf89f75cfb88c34fa144e6df6368dca01415689b2e45a9",
+      "drunken-sailor.abc": "aba277c8a174bb0c6078ef8818f3cd7bd2203002ac58915a8f358b5dc260128b",
+      "feature-tour.abc": "5af67098c396c4f2fc76beb1a73bd927d049ddb9484a4ad5bbc4a6453f777d3d",
+      "frere-jacques.musicxml": "8bf3883914859aab37162cf6b7d461da5010989994fdf5fda54714542970a6c4",
+      "greensleeves.abc": "0c6dfa9888629d2ad1ff7db92de538145ad388f1392203042ccc6d46477ab1f1",
       "mountain-king.abc": "4c8c68b46fe9504205904cf740f05e6724f5dc778d02b31774d85f2abfd72855",
-      "ode-to-joy.abc": "6676c000e9b159c7fac9791e28098189f759edeaa4317d5c7d505a26a9c0ad9b",
-      "twinkle.abc": "ebb1bc7780930a6b0480fa6a4b4b5e300d2cc97b082c9ef5dd7348e16140eeca"
+      "ode-to-joy.abc": "97beff3dfc2bf6054113510ab9c09a5e5f832bfa8071d204eb2d6e4ad5290448",
+      "twinkle.abc": "78345a1821357dd6963f2c7da37f4304eea0e0bd00766103b24e8e34ac325097"
     },
     "linux-x64": {
-      "amazing-grace.abc": "e0e406153fed12d8c89e2cd750932b06fd44dab115272fe3c822a148894b469d",
-      "camptown-races.abc": "775ff95561f5752be2542043b54cf86d3d66dd0bd94479d95beedb0196f54121",
-      "drunken-sailor.abc": "0ef3e25c77370dd20730aa2e6a487b3c20d93f5ae30491016704b3afafc1ac9c",
-      "feature-tour.abc": "4bc46d820536037b63a829b17e2f086e7b287bc1e6a90b8485d4dcf12492bb61",
-      "frere-jacques.musicxml": "72bc26891a04c0e2e217d822d6cd921a7c0b9331e471986b5f4816f17dec1225",
-      "greensleeves.abc": "5574115661e21d902bb7de616dd479514c0cade02714d4947ea0437c18b1992f",
+      "amazing-grace.abc": "50c97b16f3834f8148eb87f03cf78a8529599251eb71f441c01a1ee861c7f7c6",
+      "camptown-races.abc": "64439fa8204c5d2a3edf89f75cfb88c34fa144e6df6368dca01415689b2e45a9",
+      "drunken-sailor.abc": "aba277c8a174bb0c6078ef8818f3cd7bd2203002ac58915a8f358b5dc260128b",
+      "feature-tour.abc": "5af67098c396c4f2fc76beb1a73bd927d049ddb9484a4ad5bbc4a6453f777d3d",
+      "frere-jacques.musicxml": "8bf3883914859aab37162cf6b7d461da5010989994fdf5fda54714542970a6c4",
+      "greensleeves.abc": "0c6dfa9888629d2ad1ff7db92de538145ad388f1392203042ccc6d46477ab1f1",
       "mountain-king.abc": "4c8c68b46fe9504205904cf740f05e6724f5dc778d02b31774d85f2abfd72855",
-      "ode-to-joy.abc": "6676c000e9b159c7fac9791e28098189f759edeaa4317d5c7d505a26a9c0ad9b",
-      "twinkle.abc": "ebb1bc7780930a6b0480fa6a4b4b5e300d2cc97b082c9ef5dd7348e16140eeca"
+      "ode-to-joy.abc": "97beff3dfc2bf6054113510ab9c09a5e5f832bfa8071d204eb2d6e4ad5290448",
+      "twinkle.abc": "78345a1821357dd6963f2c7da37f4304eea0e0bd00766103b24e8e34ac325097"
     }
   }
 }

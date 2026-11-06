@@ -42,6 +42,60 @@
   sm-mtx setmatrix
 } bind def
 
+% Variable-width stroke: a smooth centreline (uniform Catmull-Rom spline)
+% through knots, each with its own width, filled as one outline with round
+% ends. Where the stroke crosses itself the nonzero fill keeps it solid.
+% [x0 y0 w0 x1 y1 w1 ...] sm-ribbon -   (units of the current space)
+/sm-rb-n 12 def
+/sm-rb-pt { 0 max sm-rb-m 1 sub min 3 mul sm-rb-k exch 2 getinterval aload pop } bind def
+/sm-rb-w { 0 max sm-rb-m 1 sub min 3 mul 2 add sm-rb-k exch get } bind def
+/sm-ribbon {
+  /sm-rb-k exch def
+  /sm-rb-m sm-rb-k length 3 idiv def
+  /sm-rb-l sm-rb-m 1 sub sm-rb-n mul 1 add 2 mul array def
+  /sm-rb-r sm-rb-l length array def
+  /sm-rb-c 0 def
+  0 1 sm-rb-m 2 sub { /sm-rb-i exch def
+    sm-rb-i sm-rb-pt /sm-rb-y0 exch def /sm-rb-x0 exch def
+    sm-rb-i 1 add sm-rb-pt /sm-rb-y3 exch def /sm-rb-x3 exch def
+    sm-rb-i 1 sub sm-rb-pt /sm-rb-ym exch def /sm-rb-xm exch def
+    sm-rb-i 2 add sm-rb-pt /sm-rb-yp exch def /sm-rb-xp exch def
+    /sm-rb-x1 sm-rb-x3 sm-rb-xm sub 6 div sm-rb-x0 add def
+    /sm-rb-y1 sm-rb-y3 sm-rb-ym sub 6 div sm-rb-y0 add def
+    /sm-rb-x2 sm-rb-x3 sm-rb-xp sm-rb-x0 sub 6 div sub def
+    /sm-rb-y2 sm-rb-y3 sm-rb-yp sm-rb-y0 sub 6 div sub def
+    /sm-rb-wa sm-rb-i sm-rb-w def /sm-rb-wb sm-rb-i 1 add sm-rb-w def
+    0 1 sm-rb-i sm-rb-m 2 sub eq { sm-rb-n } { sm-rb-n 1 sub } ifelse {
+      sm-rb-n div /sm-rb-t exch def /sm-rb-u 1 sm-rb-t sub def
+      /sm-rb-b0 sm-rb-u dup dup mul mul def
+      /sm-rb-b1 sm-rb-u dup mul sm-rb-t mul 3 mul def
+      /sm-rb-b2 sm-rb-t dup mul sm-rb-u mul 3 mul def
+      /sm-rb-b3 sm-rb-t dup dup mul mul def
+      /sm-rb-px sm-rb-x0 sm-rb-b0 mul sm-rb-x1 sm-rb-b1 mul add sm-rb-x2 sm-rb-b2 mul add sm-rb-x3 sm-rb-b3 mul add def
+      /sm-rb-py sm-rb-y0 sm-rb-b0 mul sm-rb-y1 sm-rb-b1 mul add sm-rb-y2 sm-rb-b2 mul add sm-rb-y3 sm-rb-b3 mul add def
+      /sm-rb-d0 sm-rb-u dup mul def
+      /sm-rb-d1 sm-rb-u sm-rb-t mul 2 mul def
+      /sm-rb-d2 sm-rb-t dup mul def
+      /sm-rb-dx sm-rb-x1 sm-rb-x0 sub sm-rb-d0 mul sm-rb-x2 sm-rb-x1 sub sm-rb-d1 mul add sm-rb-x3 sm-rb-x2 sub sm-rb-d2 mul add def
+      /sm-rb-dy sm-rb-y1 sm-rb-y0 sub sm-rb-d0 mul sm-rb-y2 sm-rb-y1 sub sm-rb-d1 mul add sm-rb-y3 sm-rb-y2 sub sm-rb-d2 mul add def
+      % half the width (smoothstep between the knots) over |derivative|
+      sm-rb-wb sm-rb-wa sub 3 sm-rb-t 2 mul sub mul sm-rb-t dup mul mul sm-rb-wa add 2 div
+      sm-rb-dx dup mul sm-rb-dy dup mul add sqrt div /sm-rb-h exch def
+      sm-rb-l sm-rb-c sm-rb-px sm-rb-dy sm-rb-h mul sub put
+      sm-rb-l sm-rb-c 1 add sm-rb-py sm-rb-dx sm-rb-h mul add put
+      sm-rb-r sm-rb-c sm-rb-px sm-rb-dy sm-rb-h mul add put
+      sm-rb-r sm-rb-c 1 add sm-rb-py sm-rb-dx sm-rb-h mul sub put
+      /sm-rb-c sm-rb-c 2 add def
+    } for
+  } for
+  newpath sm-rb-l 0 get sm-rb-l 1 get moveto
+  2 2 sm-rb-c 2 sub { dup sm-rb-l exch get exch 1 add sm-rb-l exch get lineto } for
+  sm-rb-c 2 sub -2 0 { dup sm-rb-r exch get exch 1 add sm-rb-r exch get lineto } for
+  closepath fill
+  0 sm-rb-pt 0 sm-rb-w 2 div sm-disc
+  sm-rb-m 1 sub sm-rb-pt sm-rb-m 1 sub sm-rb-w 2 div sm-disc
+} bind def
+
 % ---------------------------------------------------------------- staff
 % x y w sm-staff - : five lines, y is the centre line, w in points
 /sm-staff {
@@ -212,30 +266,48 @@
 
 % ---------------------------------------------------------------- clefs
 % Treble clef: origin = left edge at the G line (second line from bottom).
-/sm-clef-treble-path {
-  1.18 0.12 moveto
-  1.18 0.62 0.88 0.8 0.6 0.8 curveto
-  0.22 0.8 -0.05 0.45 -0.05 0.02 curveto
-  -0.05 -0.6 0.48 -1.0 1.02 -1.0 curveto
-  1.62 -1.0 2.02 -0.55 2.02 0.1 curveto
-  2.02 0.95 1.1 1.4 0.75 2.2 curveto
-  0.5 2.8 0.6 3.9 1.32 4.6 curveto
-  1.62 4.3 1.82 3.7 1.55 3.15 curveto
-  1.3 2.65 1.05 2.3 1.0 1.6 curveto
-  0.95 0.8 1.05 -0.6 1.12 -1.6 curveto
-  1.16 -2.25 0.95 -2.55 0.55 -2.55 curveto
-  0.22 -2.55 0.05 -2.35 0.08 -2.1 curveto
-} bind def
+% One variable-width stroke (sm-ribbon), as a pen would draw it: from the
+% teardrop inside the bowl, round the G line, up the heavy swash to the top
+% loop, then down the spine to the hook and its ball. Each knot is x y width.
+/sm-clef-treble-knots [
+  1.74 0.18 0.43
+  1.7 0.76 0.24
+  1.16 1.03 0.21
+  0.52 0.78 0.35
+  0.12 0.12 0.48
+  0.2 -0.58 0.43
+  0.68 -1.0 0.31
+  1.32 -1.12 0.19
+  2.02 -0.9 0.33
+  2.52 -0.25 0.54
+  2.52 0.6 0.6
+  2.02 1.32 0.58
+  1.38 1.9 0.52
+  0.92 2.55 0.39
+  0.82 3.38 0.25
+  1.05 4.1 0.18
+  1.48 4.45 0.17
+  1.84 4.18 0.19
+  1.86 3.55 0.24
+  1.64 2.75 0.28
+  1.47 1.8 0.31
+  1.37 0.6 0.31
+  1.32 -0.6 0.31
+  1.29 -1.65 0.3
+  1.17 -2.35 0.26
+  0.84 -2.63 0.22
+  0.5 -2.5 0.19
+] def
 /sm-clef-treble {
-  sm-at newpath sm-clef-treble-path 0.62 38 0.36 sm-nib
-  0.42 -2.02 0.36 sm-disc
+  sm-at sm-clef-treble-knots sm-ribbon
+  0.62 -2.12 0.4 sm-disc
   grestore
 } bind def
 % Treble clef with a small 8 below (tenor voice / guitar).
 /sm-clef-treble8 {
   2 copy sm-clef-treble
   sm-at /Times-Bold findfont 1.6 scalefont setfont
-  (8) stringwidth pop 2 div 1.05 exch sub -3.75 moveto (8) show grestore
+  (8) stringwidth pop 2 div 1.2 exch sub -3.75 moveto (8) show grestore
 } bind def
 % Bass clef: origin = left edge at the F line (second line from top).
 /sm-clef-bass {
