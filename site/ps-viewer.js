@@ -5,8 +5,7 @@
 // %%BeginProlog and %%EndProlog: lib/sm_engrave.ps glyphs, lib/sm_abc.ps
 // layout, the ABC parser ...) and the score: a short driver and the ABC
 // source itself, which the library parses, lays out and draws when pscat runs
-// the file (from the JS fallback engraver, `sheet --engine js`, the score is
-// instead nothing but calls such as `x y sm-head-black`). The window opens on
+// the file. The window opens on
 // the score; tabs switch to the library or the whole file, and clicking any
 // sm- name jumps to its definition. Line numbers are always the line in the
 // whole file.

@@ -8,24 +8,22 @@
 //   sheet song.abc -o out.mid            a MIDI file, from the notes PostScript plays (sm-abc-performance)
 //   sheet song.musicxml --paper a4 --engine ps-wasm
 //   sheet song.abc --transpose -2 -o song-in-Bb.pdf
-//   sheet song.abc --engine js -o song.pdf  the JavaScript layout (fallback)
 //   sheet song.pdf -o song.abc           get the source back out of a PDF
 //
 // The engraver is the PostScript library (lib/sm_abc.ps and friends): the
 // output .ps carries it, a short driver and the source itself, and pscat
 // parses (ABC, and MusicXML with lib/sm_musicxml.ps), lays out and draws the
 // score. The JS parser's Score literal is embedded only when no PostScript
-// parser is available.
+// parser is available. (The JavaScript layout, src/layout.js, and its
+// --engine js / js-wasm were retired in #10.)
 //
 // PDFs carry their source as an attachment (src/pdfmeta.js), so a PDF made
 // here is also an input: it is read back and engraved again (or, with an
 // .abc/.musicxml output, just unpacked). --no-source leaves it out.
 // Options: --tune N (1-based, for files with several X: tunes), --paper
-// letter|a4, --staff-space PT, --breaks source|auto, --engine ps|ps-wasm|js|js-wasm
-// (ps, the default: the PostScript engraver rendered by the pscat CLI;
-// ps-wasm: by its WebAssembly build; js / js-wasm: the JavaScript layout,
-// src/layout.js, kept as a fallback; cli and wasm are older names for ps and
-// ps-wasm), --footer TEXT, --format abc|musicxml, --transpose SEMITONES,
+// letter|a4, --staff-space PT, --breaks source|auto, --engine ps|ps-wasm
+// (ps, the default: rendered by the pscat CLI; ps-wasm: by its WebAssembly
+// build; cli and wasm are older names for ps and ps-wasm), --footer TEXT, --format abc|musicxml, --transpose SEMITONES,
 // --no-source, --list (print the tunes and exit).
 // The pscat binary comes from $PSCAT, else vendor/pscat/pscat
 // (npm run pscat:fetch), else `pscat` on PATH.
@@ -34,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toPostScript, parse, finishPDF, extractSource, isPDF, detectFormat, midiFile, performanceOf } from '../src/index.js';
+import { parse, finishPDF, extractSource, isPDF, detectFormat, midiFile } from '../src/index.js';
 import { selfContainedPS } from '../src/psdoc.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,16 +75,16 @@ export function pscatPath() {
   return 'pscat';
 }
 
-// --engine: which layout runs (PostScript, or the JS fallback) and which
-// pscat renders it. cli and wasm, the older names, now mean the PostScript layout.
+// --engine: which pscat renders the PostScript engraver's document (cli and
+// wasm are the older names). js and js-wasm, the JavaScript layout, are gone.
 export const ENGINES = {
-  ps: { layout: 'ps', render: 'cli' }, 'ps-wasm': { layout: 'ps', render: 'wasm' },
-  js: { layout: 'js', render: 'cli' }, 'js-wasm': { layout: 'js', render: 'wasm' },
-  cli: { layout: 'ps', render: 'cli' }, wasm: { layout: 'ps', render: 'wasm' },
+  ps: { render: 'cli' }, 'ps-wasm': { render: 'wasm' },
+  cli: { render: 'cli' }, wasm: { render: 'wasm' },
 };
+const RETIRED_ENGINES = new Set(['js', 'js-wasm']);
 
 function usage(code) {
-  console.error('usage: sheet INPUT [-o OUT.(pdf|png|svg|ps|mid)] [--tune N] [--paper letter|a4] [--staff-space PT] [--breaks source|auto] [--engine ps|ps-wasm|js|js-wasm] [--transpose N] [--dpi N] [--footer TEXT] [--no-source] [--list]\n       sheet SCORE.pdf -o SOURCE.abc     (unpack the source a PDF carries)');
+  console.error('usage: sheet INPUT [-o OUT.(pdf|png|svg|ps|mid)] [--tune N] [--paper letter|a4] [--staff-space PT] [--breaks source|auto] [--engine ps|ps-wasm] [--transpose N] [--dpi N] [--footer TEXT] [--no-source] [--list]\n       sheet SCORE.pdf -o SOURCE.abc     (unpack the source a PDF carries)');
   process.exit(code);
 }
 
@@ -114,7 +112,8 @@ async function main(argv) {
   }
   if (!input) usage(2);
   const engine = ENGINES[opts.engine];
-  if (!engine) throw Error(`unknown engine "${opts.engine}" (use ps, ps-wasm, js or js-wasm)`);
+  if (RETIRED_ENGINES.has(opts.engine)) throw Error(`--engine ${opts.engine} is gone: the JavaScript layout (src/layout.js) was retired; the PostScript engraver draws the same pages (use --engine ps or ps-wasm)`);
+  if (!engine) throw Error(`unknown engine "${opts.engine}" (use ps or ps-wasm)`);
   let src;
   let srcName = path.basename(input);
   const bytes = readFileSync(input);
@@ -137,22 +136,21 @@ async function main(argv) {
   }
   const out = opts.out || input.replace(/\.[^.]+$/, '') + '.pdf';
   const ext = path.extname(out).toLowerCase();
-  const psLayout = engine.layout === 'ps';
   if (ext === '.mid' || ext === '.midi') return writeMidi(src, out, opts, engine);
-  const r = psLayout ? psEngineDoc(src, opts) : toPostScript(src, { ...opts, lib: LIB });
+  const r = psEngineDoc(src, opts);
   // The PostScript engraver parses ABC itself and prints its warnings as it
-  // runs (relayed below). The JS parser's are shown for MusicXML, for the JS
-  // layout, and for a .ps output, which nothing runs here.
-  if (!psLayout || r.format !== 'abc' || ext === '.ps') for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
+  // runs (relayed below). The JS parser's are shown for MusicXML and for a
+  // .ps output, which nothing runs here.
+  if (r.format !== 'abc' || ext === '.ps') for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   if (ext === '.ps') {
     writeFileSync(out, r.ps);
-    console.error(`sheet: wrote ${out} (${psLayout ? 'self-contained, engraves itself in pscat' : `${r.pages} page${r.pages > 1 ? 's' : ''}, JS engraver`})`);
+    console.error(`sheet: wrote ${out} (self-contained, engraves itself in pscat)`);
     return;
   }
   const finish = (pdf) => (opts.noSource ? pdf : finishPDF(pdf, r, { source: src, filename: srcName }));
   const [W, H] = r.size;
-  let pages = r.pages || 0;
+  let pages = 0;
   let printed = '';
   if (engine.render === 'wasm') {
     const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
@@ -173,32 +171,28 @@ async function main(argv) {
       if (ext === '.pdf') { const pdf = readFileSync(out); pages = pdfPages(pdf); writeFileSync(out, finish(pdf)); }
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   }
-  if (psLayout) for (const w of psWarnings(printed)) console.error(`sheet: warning: ${w}`);
+  for (const w of psWarnings(printed)) console.error(`sheet: warning: ${w}`);
   const notes = [pages ? `${pages} page${pages > 1 ? 's' : ''}` : '', transposedNote(r)].filter(Boolean).join(', ');
-  console.error(`sheet: wrote ${out}${notes ? ` (${notes})` : ''}, ${psLayout ? 'PostScript' : 'JS'} engraver`);
+  console.error(`sheet: wrote ${out}${notes ? ` (${notes})` : ''}, PostScript engraver`);
 }
 
 // .mid: the notes as PostScript plays them (lib/sm_perform.ps) into a
-// Standard MIDI File (src/play.js midiFile); --engine js uses src/play.js.
+// Standard MIDI File (src/play.js midiFile).
 async function writeMidi(src, out, opts, engine) {
-  let perf;
-  if (engine.layout === 'js') perf = performanceOf(src, opts);
-  else {
-    const doc = psEngineDoc(src, { ...opts, perform: true });
-    let printed;
-    if (engine.render === 'wasm') {
-      const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
-      printed = (await createRenderer()).render(doc.ps, { width: 8, height: 8 }).output;
-    } else {
-      const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
-      try {
-        const psFile = path.join(tmp, 'perform.ps');
-        writeFileSync(psFile, doc.ps);
-        printed = execFileSync(pscatPath(), ['--page', '8x8', '--pdf', path.join(tmp, 'blank.pdf'), psFile], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 256 << 20 });
-      } finally { rmSync(tmp, { recursive: true, force: true }); }
-    }
-    perf = performanceFromOutput(printed);
+  const doc = psEngineDoc(src, { ...opts, perform: true });
+  let printed;
+  if (engine.render === 'wasm') {
+    const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
+    printed = (await createRenderer()).render(doc.ps, { width: 8, height: 8 }).output;
+  } else {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
+    try {
+      const psFile = path.join(tmp, 'perform.ps');
+      writeFileSync(psFile, doc.ps);
+      printed = execFileSync(pscatPath(), ['--page', '8x8', '--pdf', path.join(tmp, 'blank.pdf'), psFile], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 256 << 20 });
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
   }
+  const perf = performanceFromOutput(printed);
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, midiFile(perf, { title: perf.title }));
   console.error(`sheet: wrote ${out} (${perf.notes.length} notes, ${perf.staves} track${perf.staves > 1 ? 's' : ''})`);

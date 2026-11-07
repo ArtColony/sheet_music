@@ -2,10 +2,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parse, performanceOf, midiFile, playOrder, transposeChord, fifthsShift, embedSource, extractSource, toPostScript } from '../src/index.js';
+import { parse, performanceOf, midiFile, playOrder, transposeChord, fifthsShift, embedSource, extractSource } from '../src/index.js';
+import { selfContainedPS } from '../src/psdoc.js';
 import { pdfString } from '../src/pdfmeta.js';
 
-const lib = readFileSync(new URL('../lib/sm_engrave.ps', import.meta.url), 'utf8');
+const lib = (f) => readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8');
+const libs = { engraveLib: lib('sm_engrave.ps'), abcLib: lib('sm_abc.ps') };
 const tune = (body, k = 'C') => `X:1\nT:t\nM:4/4\nL:1/4\nK:${k}\n${body}\n`;
 const pitches = (src, transpose = 0) => performanceOf(src, { transpose }).notes.map((n) => n.midi);
 
@@ -14,7 +16,7 @@ test('transpose picks the key with fewest accidentals and spells by it', () => {
   assert.equal(fifthsShift(1, 0), -5);   // C up a semitone: Db (5 flats), not C# (7 sharps)
   assert.equal(fifthsShift(-2, 0), -2);  // down a tone: Bb
   const s = parse(tune('F G ^G A |')).scores[0];
-  const r = toPostScript(tune('F G ^G A |'), { lib, transpose: 2 });
+  const r = selfContainedPS(tune('F G ^G A |'), { ...libs, transpose: 2 });
   assert.equal(r.transposed.key, 'D');
   assert.ok(s);
 });

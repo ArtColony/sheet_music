@@ -126,7 +126,7 @@ Record provenance in `S:` / `Z:`; samples added to this repo also go in
 ## Other ways in
 
 - **Editor:** `npm run build && npm run serve`, then open http://localhost:8765/editor.html: live preview, transpose, play, share links, PDF/MIDI download.
-- **JavaScript:** `toPostScript(text, { lib })` from `src/index.js` returns `{ ps, pages, size, warnings }`.
+- **JavaScript:** `psEngineDoc(text, { paper, tune, transpose })` from `bin/sheet.mjs` (or `selfContainedPS` from `src/psdoc.js`, given the `lib/*.ps` texts) returns `{ ps, size, title, warnings, transposed }`: the self-contained document to render with pscat.
 - **MusicXML:** `node bin/sheet.mjs piece.musicxml` (uncompressed, partwise).
 - **Headless, PostScript only:** `pscat --pdf tune.pdf --page 612x792 -e
   '(lib/sheet.ps) run (tune.abc) sm-abc-engrave-file'` engraves with no

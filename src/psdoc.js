@@ -15,7 +15,7 @@
 // Score literal fallback gets the total.
 import { parse, parseAnnotations, tuneTranspose } from './index.js';
 import { splitTunes } from './abc.js';
-import { PAPERS } from './layout.js';
+import { PAPERS } from './paper.js';
 import { psLiteral } from './ps.js';
 import { transposeScore } from './transpose.js';
 
