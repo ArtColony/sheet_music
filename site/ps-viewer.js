@@ -1,12 +1,15 @@
 // "View PostScript": a window that shows a score's PostScript program with
 // line numbers, syntax colours and a scroll area, like pscat's gallery.
 //
-// A document from this engraver has two parts: the glyph library
-// (lib/sm_engrave.ps, between %%BeginProlog and %%EndProlog) and the score
-// itself, which is nothing but calls into that library: `x y sm-head-black`,
-// `x y1 y2 sm-stem` ... The window opens on the score; tabs switch to the
-// library or the whole file, and clicking any sm- name jumps to its
-// definition. Line numbers are always the line in the whole file.
+// A document from this engraver has two parts: the library (between
+// %%BeginProlog and %%EndProlog: lib/sm_engrave.ps glyphs, lib/sm_abc.ps
+// layout, the ABC parser ...) and the score: a short driver and the ABC
+// source itself, which the library parses, lays out and draws when pscat runs
+// the file (from the JS fallback engraver, `sheet --engine js`, the score is
+// instead nothing but calls such as `x y sm-head-black`). The window opens on
+// the score; tabs switch to the library or the whole file, and clicking any
+// sm- name jumps to its definition. Line numbers are always the line in the
+// whole file.
 //
 // Used by the gallery (index.html: links with class "view-ps") and the editor
 // (its "PS" view). Self-contained: it adds its own <dialog> and styles.
@@ -92,7 +95,7 @@ function viewsOf(text) {
   if (a < 0 || b < a) return [{ id: 'all', label: 'Whole file', from: 0, to: lines.length, lines }];
   return [
     { id: 'score', label: 'Score program', from: b + 1, to: lines.length, lines },
-    { id: 'lib', label: `Glyph library (${b - a - 1} lines)`, from: a + 1, to: b, lines },
+    { id: 'lib', label: `Library (${b - a - 1} lines)`, from: a + 1, to: b, lines },
     { id: 'all', label: 'Whole file', from: 0, to: lines.length, lines },
   ];
 }
@@ -109,7 +112,7 @@ function build() {
   dialog.innerHTML = `
     <div class="psv-head">
       <div class="psv-title"><p class="psv-name" id="psv-name"></p><p class="psv-meta"></p></div>
-      <div class="psv-actions"><a class="psv-raw" target="_blank" rel="noopener">Raw file</a><a class="psv-lib" href="https://github.com/ArtColony/sheet_music/blob/main/lib/sm_engrave.ps" target="_blank" rel="noopener">Library on GitHub</a><button type="button" class="psv-close">Close</button></div>
+      <div class="psv-actions"><a class="psv-raw" target="_blank" rel="noopener">Raw file</a><a class="psv-lib" href="https://github.com/ArtColony/sheet_music/tree/main/lib" target="_blank" rel="noopener">Library on GitHub</a><button type="button" class="psv-close">Close</button></div>
       <div class="psv-tabs" role="group" aria-label="Part of the file"></div>
     </div>
     <div class="psv-body" tabindex="0" role="region" aria-label="PostScript source"><pre class="psv-gutter" aria-hidden="true"></pre><pre class="psv-code"><code></code></pre></div>`;
@@ -171,7 +174,9 @@ export function openPostScript({ name, text, meta, raw, download }) {
   const v0 = views[0];
   const calls = v0.lines.slice(v0.from, v0.to).filter((l) => /\ssm-[\w-]+\s*$/.test(l)).length;
   els.name.textContent = name;
-  els.meta.textContent = meta || `${lines} lines · ${(new Blob([text]).size / 1024).toFixed(1)} KB${views.length > 1 ? ` · ${calls} drawing calls into the glyph library` : ''}`;
+  const selfEngraving = v0.lines.slice(v0.from, v0.to).some((l) => /\bsm-abc-readsrc\b/.test(l));
+  const what = views.length < 2 ? '' : selfEngraving ? ' · the source is embedded; the library engraves it as pscat runs the file' : ` · ${calls} drawing calls into the glyph library`;
+  els.meta.textContent = meta || `${lines} lines · ${(new Blob([text]).size / 1024).toFixed(1)} KB${what}`;
   if (raw) els.raw.href = raw;
   else { els.raw.href = URL.createObjectURL(new Blob([text], { type: download ? 'application/postscript' : 'text/plain' })); els.raw.dataset.blob = '1'; }
   if (download) { els.raw.download = name; els.raw.textContent = 'Download'; els.raw.removeAttribute('target'); }

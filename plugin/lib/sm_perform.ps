@@ -1,0 +1,344 @@
+%!PS
+% sm_perform.ps -- what a Score sounds like: its notes as JSON events.
+%
+% Part of ArtColony/sheet_music (MIT). A port of src/play.js performance():
+% repeats and 1st/2nd endings are played out, ties join notes, pitches come
+% from the key signature and the accidentals carried through the bar, as
+% written. Grace notes, D.C./D.S. and dynamics are not performed. Times are
+% exact fractions of a whole note from the start, [num den] (reduced), so the
+% events are the same in every pscat build; the caller turns them into
+% seconds with the tempo, and into sound or a MIDI file (src/play.js
+% midiFile). tests/ps-perform.test.mjs checks that the events equal play.js's
+% for every sample.
+%
+% Public entry points
+%   (abc text) [options] sm-abc-performance -
+%   score [options] sm-abc-performance -
+%       print the performance as one line of JSON (keys sorted) to stdout:
+%       {"length":[n,d],"notes":[{"at":[n,d],"dur":[n,d],"midi":60,"staff":0},...],
+%        "staves":1,"tempo":{"beat":[1,4],"bpm":100},"title":"..."}
+%       notes sorted by time, then staff, then pitch. "staff" is the staff
+%       index; each ABC voice (V:) is a staff. Options: /tune (0-based, for
+%       ABC text with several X: tunes) and /transpose (semitones; for ABC
+%       text the tune's %%transpose line, else the file header's, adds to
+%       it), as for sm-abc-engrave. Prints nothing else (no warnings).
+%       MusicXML text works too (lib/sm_musicxml.ps, run on demand): told
+%       apart as src/index.js detectFormat does, or by options /format (musicxml).
+%   (path.abc) [options] sm-abc-performance-file -   the same for a file
+%   score sm-score-performance perf
+%       the performance as a dictionary (the same keys), printing nothing
+%
+% Example (headless, from the repository root):
+%   pscat --pdf /dev/null -e '(lib/sheet.ps) run (samples/twinkle.abc) sm-abc-performance-file'
+%
+% Conventions: every name starts with sm-; internals are sm-pf-* and live in
+% the private dict sm-pf-dict, which the entry points begin/end. Integer
+% arithmetic only.
+
+userdict begin
+
+/sm-pf-dict 120 dict def
+sm-pf-dict begin
+
+/sm-pf-pc << /C 0 /D 2 /E 4 /F 5 /G 7 /A 9 /B 11 >> def
+/sm-pf-alter << /sharp 1 /dsharp 2 /flat -1 /dflat -2 /natural 0 >> def
+/sm-pf-sharps [/F /C /G /D /A /E /B] def
+/sm-pf-flats [/B /E /A /D /G /C /F] def
+
+% d k sm-pf-get v|null
+/sm-pf-get { 2 copy known { get } { pop pop null } ifelse } bind def
+% v sm-pf-truthy bool   (JavaScript truthiness of a Score value)
+/sm-pf-truthy {
+  dup null eq { pop false } {
+  dup type /booleantype eq { } {
+  dup type /integertype eq 1 index type /realtype eq or { 0 ne } {
+  dup type /stringtype eq { length 0 gt } { pop true } ifelse } ifelse } ifelse } ifelse
+} bind def
+/sm-pf-is { sm-pf-get sm-pf-truthy } bind def   % d k -> bool
+
+% ---------------------------------------------------------------- fractions
+/sm-pf-gcd { % a b -> g (1 when both are 0)
+  abs exch abs { dup 0 eq { pop exit } if exch 1 index mod } loop dup 0 eq { pop 1 } if
+} bind def
+/sm-pf-F { % n d -> [n d] reduced, d > 0
+  dup 0 lt { neg exch neg exch } if
+  2 copy sm-pf-gcd dup 3 1 roll idiv 3 1 roll idiv exch 2 array astore
+} bind def
+/sm-pf-add { % a b -> a+b
+  aload pop 3 -1 roll aload pop   % b0 b1 a0 a1
+  /sm-pf-a1 exch def /sm-pf-a0 exch def /sm-pf-b1 exch def /sm-pf-b0 exch def
+  sm-pf-a0 sm-pf-b1 mul sm-pf-b0 sm-pf-a1 mul add sm-pf-a1 sm-pf-b1 mul sm-pf-F
+} bind def
+/sm-pf-mul { % a b -> a*b
+  aload pop 3 -1 roll aload pop 3 -1 roll mul 3 1 roll mul exch sm-pf-F
+} bind def
+/sm-pf-cmp { % a b -> an integer with the sign of a - b
+  aload pop 3 -1 roll aload pop   % b0 b1 a0 a1
+  4 -1 roll mul 3 1 roll mul exch sub
+} bind def
+
+% ---------------------------------------------------------------- repeats
+% label sm-pf-endings [n ...] : the pass numbers of an ending label
+% ("1", "2", "1,3", "1-3"; anything without a leading number counts as 1)
+/sm-pf-isdigit { dup 48 ge exch 57 le and } bind def
+/sm-pf-issep { dup 44 eq exch dup 32 eq exch dup 9 ge exch 13 le and or or } bind def
+/sm-pf-endings {
+  dup type /stringtype ne { 32 string cvs } if
+  /sm-pf-el exch def
+  [
+  /sm-pf-ei 0 def
+  { sm-pf-ei sm-pf-el length ge { exit } if
+    % skip separators, then read one part up to the next separator
+    sm-pf-el sm-pf-ei get sm-pf-issep { /sm-pf-ei sm-pf-ei 1 add def } {
+      /sm-pf-ej sm-pf-ei def
+      { sm-pf-ej sm-pf-el length ge { exit } if sm-pf-el sm-pf-ej get sm-pf-issep { exit } if /sm-pf-ej sm-pf-ej 1 add def } loop
+      /sm-pf-part sm-pf-el sm-pf-ei sm-pf-ej sm-pf-ei sub getinterval def
+      /sm-pf-ei sm-pf-ej def
+      % ^(\d+)(?:-(\d+))?
+      /sm-pf-k 0 def /sm-pf-a 0 def
+      { sm-pf-k sm-pf-part length ge { exit } if sm-pf-part sm-pf-k get dup sm-pf-isdigit not { pop exit } if
+        48 sub sm-pf-a 10 mul add /sm-pf-a exch def /sm-pf-k sm-pf-k 1 add def } loop
+      sm-pf-k 0 gt {
+        /sm-pf-b sm-pf-a def
+        sm-pf-k 1 add sm-pf-part length lt { sm-pf-part sm-pf-k get 45 eq sm-pf-part sm-pf-k 1 add get sm-pf-isdigit and } { false } ifelse {
+          /sm-pf-k sm-pf-k 1 add def /sm-pf-b 0 def
+          { sm-pf-k sm-pf-part length ge { exit } if sm-pf-part sm-pf-k get dup sm-pf-isdigit not { pop exit } if
+            48 sub sm-pf-b 10 mul add /sm-pf-b exch def /sm-pf-k sm-pf-k 1 add def } loop
+        } if
+        sm-pf-a 1 sm-pf-b { } for
+      } if
+    } ifelse
+  } loop
+  counttomark 0 eq { 1 } if
+  ]
+} bind def
+% m pass sm-pf-hasending bool : does m start an ending that pass plays?
+/sm-pf-hasending {
+  exch /ending sm-pf-get dup sm-pf-truthy {
+    /label sm-pf-get sm-pf-endings false exch { 2 index eq or } forall exch pop
+  } { pop pop false } ifelse
+} bind def
+% measures sm-pf-order [i ...] : the measures in the order they are played
+/sm-pf-order {
+  /sm-pf-ms exch def
+  /sm-pf-start 0 def /sm-pf-pass 1 def /sm-pf-guard 0 def /sm-pf-i 0 def
+  [
+  { sm-pf-i sm-pf-ms length lt { sm-pf-guard 10000 lt /sm-pf-guard sm-pf-guard 1 add def } { false } ifelse not { exit } if
+    /sm-pf-m sm-pf-ms sm-pf-i get def
+    sm-pf-m /startRepeat sm-pf-is sm-pf-start sm-pf-i ne and { /sm-pf-start sm-pf-i def /sm-pf-pass 1 def } if
+    sm-pf-m /ending sm-pf-is { sm-pf-m sm-pf-pass sm-pf-hasending not } { false } ifelse {
+      /sm-pf-i sm-pf-i sm-pf-m /ending get /span sm-pf-get dup sm-pf-truthy not { pop 1 } if add def
+    } {
+      sm-pf-i
+      sm-pf-m /endBar sm-pf-get (repeat-end) eq {
+        % another pass when this repeat (or an ending soon after it) has an ending for it
+        /sm-pf-more false def
+        sm-pf-start 1 sm-pf-i { sm-pf-ms exch get sm-pf-pass 1 add sm-pf-hasending { /sm-pf-more true def } if } for
+        sm-pf-i 1 add 1 sm-pf-ms length 1 sub { dup sm-pf-i 1 add sub 8 lt
+          { sm-pf-ms exch get sm-pf-pass 1 add sm-pf-hasending { /sm-pf-more true def } if } { pop } ifelse } for
+        sm-pf-pass 1 eq sm-pf-more or {
+          /sm-pf-pass sm-pf-pass 1 add def /sm-pf-i sm-pf-start def
+        } {
+          /sm-pf-start sm-pf-i 1 add def /sm-pf-pass 1 def /sm-pf-i sm-pf-i 1 add def
+        } ifelse
+      } { /sm-pf-i sm-pf-i 1 add def } ifelse
+    } ifelse
+  } loop
+  ]
+} bind def
+
+% m time sm-pf-mlen frac : how long measure m lasts
+/sm-pf-mlen {
+  /sm-pf-tm exch def /sm-pf-mm exch def
+  /sm-pf-len [0 1] def
+  sm-pf-mm /staves get {
+    [0 1] exch /events get { dup /grace sm-pf-is { pop } { /dur get sm-pf-add } ifelse } forall
+    dup sm-pf-len sm-pf-cmp 0 gt { /sm-pf-len exch def } { pop } ifelse
+  } forall
+  sm-pf-mm /mmCount sm-pf-get dup null eq { pop 0 } if dup 1 gt { 1 2 array astore sm-pf-len exch sm-pf-mul /sm-pf-len exch def } { pop } ifelse
+  sm-pf-len 0 get 0 eq sm-pf-tm sm-pf-truthy and { sm-pf-tm /num sm-pf-is } { false } ifelse {
+    /sm-pf-len sm-pf-tm /num get sm-pf-tm /den get sm-pf-F def
+  } if
+  sm-pf-len
+} bind def
+
+% fifths sm-pf-keyalters dict : the key signature's alteration per step
+/sm-pf-keyalters {
+  /sm-pf-f exch def
+  sm-pf-f abs dict
+  0 1 sm-pf-f abs 7 2 copy gt { exch } if pop 1 sub {
+    sm-pf-f 0 gt { sm-pf-sharps exch get 1 } { sm-pf-flats exch get -1 } ifelse 2 index 3 1 roll put
+  } for
+} bind def
+
+% (step) oct sm-pf-mkid /step/oct : the key a pitch is held and carried under
+/sm-pf-mkid {
+  11 string cvs exch                                   % (oct) (step)
+  dup length 2 index length add 1 add string           % (oct) (step) (buf)
+  dup 0 3 index putinterval
+  dup 2 index length 47 put
+  dup 2 index length 1 add 5 -1 roll putinterval
+  exch pop cvn
+} bind def
+
+% notes sm-pf-sort notes : stable insertion sort by (at, staff, midi)
+/sm-pf-after { % a b -> bool : a sorts strictly after b
+  2 copy /at get exch /at get exch sm-pf-cmp dup 0 ne { 3 1 roll pop pop 0 gt } { pop
+    2 copy /staff get exch /staff get sub dup 0 ne { 3 1 roll pop pop 0 lt } { pop
+      /midi get exch /midi get lt } ifelse } ifelse
+} bind def
+/sm-pf-sort {
+  /sm-pf-arr exch def
+  1 1 sm-pf-arr length 1 sub { /sm-pf-si exch def
+    /sm-pf-x sm-pf-arr sm-pf-si get def /sm-pf-sj sm-pf-si 1 sub def
+    { sm-pf-sj 0 lt { exit } if sm-pf-arr sm-pf-sj get sm-pf-x sm-pf-after not { exit } if
+      sm-pf-arr sm-pf-sj 1 add sm-pf-arr sm-pf-sj get put /sm-pf-sj sm-pf-sj 1 sub def } loop
+    sm-pf-arr sm-pf-sj 1 add sm-pf-x put
+  } for
+  sm-pf-arr
+} bind def
+
+% ---------------------------------------------------------------- performance
+/sm-pf-perform { % score -> perf
+  /sm-pf-S exch def
+  /sm-pf-MS sm-pf-S /measures get def
+  /sm-pf-ord sm-pf-MS sm-pf-order def
+  % key and time in force at each measure, in written order
+  /sm-pf-keyat sm-pf-MS length array def /sm-pf-timeat sm-pf-MS length array def
+  /sm-pf-key sm-pf-S /initial get /key get def /sm-pf-time sm-pf-S /initial get /time get def
+  0 1 sm-pf-MS length 1 sub { /sm-pf-i exch def
+    sm-pf-MS sm-pf-i get /key sm-pf-get dup sm-pf-truthy { /sm-pf-key exch def } { pop } ifelse
+    sm-pf-MS sm-pf-i get /time sm-pf-get dup sm-pf-truthy { /sm-pf-time exch def } { pop } ifelse
+    sm-pf-keyat sm-pf-i sm-pf-key put sm-pf-timeat sm-pf-i sm-pf-time put
+  } for
+  /sm-pf-notes [] def /sm-pf-nn 0 def
+  /sm-pf-t [0 1] def
+  % tied-over notes per staff: /step/oct -> note
+  /sm-pf-held [ sm-pf-S /staves get { pop 8 dict } forall ] def
+  sm-pf-ord { /sm-pf-i exch def
+    /sm-pf-m sm-pf-MS sm-pf-i get def
+    /sm-pf-ka sm-pf-keyat sm-pf-i get /fifths sm-pf-get dup sm-pf-truthy not { pop 0 } if sm-pf-keyalters def
+    0 1 sm-pf-m /staves get length 1 sub { /sm-pf-s exch def
+      /sm-pf-carry 8 dict def   % accidentals carried through the bar
+      /sm-pf-at sm-pf-t def
+      /sm-pf-next 8 dict def
+      sm-pf-m /staves get sm-pf-s get /events get { /sm-pf-e exch def
+        sm-pf-e /grace sm-pf-is not {
+          sm-pf-e /kind get (note) eq {
+            sm-pf-e /notes get { /sm-pf-n exch def
+              /sm-pf-step sm-pf-n /step get cvn def
+              /sm-pf-id sm-pf-n /step get sm-pf-n /oct get sm-pf-mkid def
+              sm-pf-n /acc sm-pf-is { sm-pf-carry sm-pf-id sm-pf-alter sm-pf-n /acc get cvn sm-pf-get dup null eq { pop 0 } if put } if
+              /sm-pf-prev sm-pf-held sm-pf-s get sm-pf-id sm-pf-get dup null eq { pop sm-pf-next sm-pf-id sm-pf-get } if def
+              % a note tied over the bar line keeps its pitch (and accidental)
+              sm-pf-carry sm-pf-id known { sm-pf-carry sm-pf-id get } {
+                sm-pf-prev null ne sm-pf-n /acc sm-pf-is not and { null } { sm-pf-ka sm-pf-step sm-pf-get dup null eq { pop 0 } if } ifelse
+              } ifelse
+              dup null eq { pop sm-pf-prev /midi get } {
+                sm-pf-n /oct get 1 add 12 mul sm-pf-pc sm-pf-step get add add } ifelse
+              /sm-pf-midi exch def
+              sm-pf-prev null ne {
+                sm-pf-prev /midi get sm-pf-midi eq { sm-pf-prev /at get sm-pf-prev /dur get sm-pf-add sm-pf-at sm-pf-cmp 0 eq } { false } ifelse
+              } { false } ifelse {
+                sm-pf-prev /dur sm-pf-prev /dur get sm-pf-e /dur get sm-pf-add put
+                /sm-pf-note sm-pf-prev def
+              } {
+                /sm-pf-note << /at sm-pf-at /dur sm-pf-e /dur get /midi sm-pf-midi /staff sm-pf-s >> def
+                sm-pf-nn sm-pf-notes length ge { /sm-pf-notes sm-pf-nn 2 mul 16 add array dup 0 sm-pf-notes putinterval def } if
+                sm-pf-notes sm-pf-nn sm-pf-note put /sm-pf-nn sm-pf-nn 1 add def
+              } ifelse
+              sm-pf-held sm-pf-s get sm-pf-id undef sm-pf-next sm-pf-id undef
+              sm-pf-n /tie sm-pf-is { sm-pf-next sm-pf-id sm-pf-note put } if
+            } forall
+          } if
+          /sm-pf-at sm-pf-at sm-pf-e /dur get sm-pf-add def
+        } if
+      } forall
+      sm-pf-held sm-pf-s sm-pf-next put
+    } for
+    /sm-pf-t sm-pf-t sm-pf-m sm-pf-timeat sm-pf-i get sm-pf-mlen sm-pf-add def
+  } forall
+  /sm-pf-tempo sm-pf-S /tempo sm-pf-get def
+  sm-pf-tempo sm-pf-truthy { sm-pf-tempo /bpm sm-pf-is } { false } ifelse {
+    << /beat sm-pf-tempo /beat sm-pf-get dup sm-pf-truthy not { pop [1 4] } if /bpm sm-pf-tempo /bpm get >>
+  } { << /beat [1 4] /bpm 100 >> } ifelse
+  /sm-pf-tp exch def
+  <<
+    /notes sm-pf-notes 0 sm-pf-nn getinterval sm-pf-sort
+    /length sm-pf-t
+    /tempo sm-pf-tp
+    /staves sm-pf-S /staves get length
+    /title sm-pf-S /meta get /title sm-pf-get dup sm-pf-truthy not { pop (Untitled) } if
+  >>
+} bind def
+
+% the parser (for ABC text) and sm-score-transpose, loaded on demand as
+% lib/sm_abc.ps does: from sm-lib-dir when defined, else (lib/)
+/sm-pf-need { % /name (file.ps) ->
+  1 index where { pop pop pop } { mark exch {
+    /sm-lib-dir where { pop sm-lib-dir } { (lib/) } ifelse
+    dup length 2 index length add string dup 0 4 -1 roll putinterval dup 3 -1 roll
+    1 index length 1 index length sub exch putinterval run
+  } stopped cleartomark pop } ifelse
+} bind def
+
+% text sm-pf-isxml bool : MusicXML rather than ABC (src/index.js detectFormat:
+% the first 2000 bytes, leading white space skipped, start with <?xml or hold
+% <score-partwise or <score-timewise)
+/sm-pf-isxml {
+  dup length 2000 min 0 exch getinterval
+  { dup length 0 eq { exit } if
+    dup 0 get dup 32 eq exch dup 9 ge exch 13 le and or { 1 1 index length 1 sub getinterval } {
+    dup (\357\273\277) anchorsearch { pop exch pop } { pop exit } ifelse } ifelse } loop
+  dup (<?xml) anchorsearch { pop pop pop true } { pop
+    dup (<score-partwise) search { pop pop pop pop true } { pop
+      (<score-timewise) search { pop pop pop true } { pop false } ifelse } ifelse } ifelse
+} bind def
+
+% text-or-score options -> perf
+%   text is ABC, or MusicXML when options /format is (musicxml) or the text
+%   looks like it (sm-pf-isxml)
+/sm-pf-of {
+  dup /sm-pf-opts exch def
+  /tune sm-pf-get dup null eq { pop 0 } if cvi /sm-pf-tune exch def
+  sm-pf-opts /transpose sm-pf-get dup null eq { pop 0 } if cvi /sm-pf-semis exch def
+  dup type /stringtype eq { sm-pf-opts /format sm-pf-get dup null eq { pop dup sm-pf-isxml } { (musicxml) eq } ifelse } { false } ifelse {
+    % MusicXML (lib/sm_musicxml.ps); its <!-- %%transpose N --> adds to /transpose
+    /sm-musicxml-parse (sm_musicxml.ps) sm-pf-need
+    /sm-abc-tune-transpose (sm_abc_parse.ps) sm-pf-need
+    /sm-pf-text exch def
+    /sm-abc-tune-transpose where { pop sm-pf-text 0 sm-abc-tune-transpose /sm-pf-semis exch sm-pf-semis add def } if
+    sm-pf-text sm-musicxml-parse
+  } if
+  dup type /stringtype eq {
+    /sm-abc-parse-all (sm_abc_parse.ps) sm-pf-need
+    /sm-pf-text exch def
+    % %%transpose in the tune (else the file header) adds to /transpose
+    /sm-abc-tune-transpose where { pop sm-pf-text sm-pf-tune sm-abc-tune-transpose /sm-pf-semis exch sm-pf-semis add def } if
+    sm-pf-text sm-abc-parse-all
+    dup length sm-pf-tune le { pop (sm-abc: error: no such /tune \(0-based\)) = 0 dict } { sm-pf-tune get } ifelse
+  } if
+  dup /measures known not { pop << /meta << >> /initial << /key << /fifths 0 >> /time << /num 4 /den 4 >> >> /staves [] /measures [] >> } if
+  sm-pf-semis 0 ne {
+    /sm-score-transpose (sm_transpose.ps) sm-pf-need
+    sm-pf-semis sm-score-transpose
+  } if
+  sm-pf-perform
+} bind def
+
+end % sm-pf-dict
+
+% ---------------------------------------------------------------- public
+/sm-score-performance { sm-pf-dict begin sm-pf-perform end } bind def
+/sm-abc-performance {
+  dup type /dicttype eq { dup /measures known not } { false } ifelse not { 0 dict } if
+  sm-pf-dict begin /sm-abc-json (sm_abc_parse.ps) sm-pf-need sm-pf-of end
+  sm-abc-json (\n) print
+} bind def
+/sm-abc-performance-file {
+  dup type /dicttype eq { } { 0 dict } ifelse exch
+  (r) file dup null sm-abc-readsrc exch closefile
+  exch sm-abc-performance
+} bind def
+
+end % userdict

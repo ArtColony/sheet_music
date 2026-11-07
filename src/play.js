@@ -8,6 +8,11 @@
 //
 // midiFile() writes the result as a Standard MIDI File (format 1, one track
 // per staff).
+//
+// The editor and `sheet -o x.mid` take the events from PostScript instead
+// (lib/sm_perform.ps sm-abc-performance prints exactly this structure as
+// JSON); performance() stays as the reference that tests/ps-perform.test.mjs
+// compares it with, and for `--engine js`.
 import { F, add, mul, ZERO, cmp, val } from './frac.js';
 import { SHARP_ORDER, FLAT_ORDER } from './score.js';
 

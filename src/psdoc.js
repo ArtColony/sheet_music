@@ -27,13 +27,16 @@ const dscText = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, ''
  * (lib/sm_abc.ps, required), parseLib (lib/sm_abc_parse.ps, optional),
  * transposeLib (lib/sm_transpose.ps, optional; without it pscat runs it from
  * lib/ when the score needs transposing), musicxmlLib (lib/sm_musicxml.ps,
- * optional: embedded, with parseLib, for a MusicXML source), tune, paper
- * ('letter'|'a4'), sp, breaks, footer, format, transpose (semitones, added to any %%transpose
- * line), embedScore (default true).
+ * optional: embedded, with parseLib, for a MusicXML source), tune, paper ('letter'|'a4'), sp,
+ * breaks, footer, format, transpose (semitones, added to any %%transpose
+ * line), embedScore (default true), perform (with performLib,
+ * lib/sm_perform.ps: instead of drawing, the document prints the tune's
+ * playback events as one JSON line, sm-abc-performance).
  * Returns { ps, size, title, composer, format, warnings, transposed }.
  */
 export function selfContainedPS(src, options = {}) {
-  const { engraveLib, abcLib, parseLib, transposeLib, musicxmlLib } = options;
+  const { engraveLib, abcLib, parseLib, transposeLib, performLib, musicxmlLib } = options;
+  if (options.perform && !performLib) throw Error('selfContainedPS: perform needs options.performLib');
   if (!engraveLib || !abcLib) throw Error('selfContainedPS needs options.engraveLib and options.abcLib');
   const parsed = parse(src, options);
   const tune = options.tune || 0;
@@ -57,11 +60,12 @@ export function selfContainedPS(src, options = {}) {
     + (annotations.length ? ' /annotations ' + psLiteral(annotations) : '')
     + (optSemis ? ' /transpose ' + optSemis : '') + ' >>';
   const title = score.meta.title || 'Untitled';
-  const embed = options.embedScore !== false;
   // MusicXML parsed in PostScript too (without musicxmlLib the document is
   // exactly what it was before lib/sm_musicxml.ps existed)
   const xmlPS = !!(musicxmlLib && parseLib && parsed.format === 'musicxml');
-  const fromText = xmlPS ? 'sm-musicxml-engrave-string' : 'sm-abc-engrave-string';
+  const [fromText, fromScore] = options.perform ? ['sm-abc-performance', 'sm-abc-performance']
+    : [xmlPS ? 'sm-musicxml-engrave-string' : 'sm-abc-engrave-string', 'sm-abc-engrave'];
+  const embed = options.embedScore !== false;
   const lines = [
     '%!PS-Adobe-3.0',
     `%%Title: ${dscText(title)}`,
@@ -74,6 +78,7 @@ export function selfContainedPS(src, options = {}) {
     abcLib.trimEnd(),
     parseLib ? parseLib.trimEnd() : null,
     transposeLib ? transposeLib.trimEnd() : null,
+    options.perform ? performLib.trimEnd() : null,
     xmlPS ? musicxmlLib.trimEnd() : null,
     '%%EndProlog',
     '%%BeginSetup',
@@ -86,12 +91,12 @@ export function selfContainedPS(src, options = {}) {
     src.replace(/\r\n?/g, '\n').replace(/\n$/, ''),
     END_MARK,
     '/sm-abc-source exch def',
-    xmlPS ? '/sm-musicxml-engrave-string where { pop true } { false } ifelse'
+    xmlPS ? '/sm-musicxml-parse where { pop sm-abc-options /format get (musicxml) eq } { false } ifelse'
       : '/sm-abc-parse where { pop sm-abc-options /format get (abc) eq } { false } ifelse',
     'sm-abc-score null eq or',
     semis === optSemis
-      ? `{ sm-abc-source sm-abc-options ${fromText} } { sm-abc-score sm-abc-options sm-abc-engrave } ifelse`
-      : `{ sm-abc-source sm-abc-options ${fromText} } { sm-abc-score sm-abc-options dup length 1 add dict copy dup /transpose ${semis} put sm-abc-engrave } ifelse`,
+      ? `{ sm-abc-source sm-abc-options ${fromText} } { sm-abc-score sm-abc-options ${fromScore} } ifelse`
+      : `{ sm-abc-source sm-abc-options ${fromText} } { sm-abc-score sm-abc-options dup length 1 add dict copy dup /transpose ${semis} put ${fromScore} } ifelse`,
     '%%EOF',
     '',
   ].filter((l) => l !== null);
