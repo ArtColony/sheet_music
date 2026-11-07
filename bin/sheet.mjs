@@ -35,10 +35,12 @@ const parseLibPath = path.join(root, 'lib/sm_abc_parse.ps');
 export const PARSE_LIB = existsSync(parseLibPath) ? readFileSync(parseLibPath, 'utf8') : null;
 const transposeLibPath = path.join(root, 'lib/sm_transpose.ps');
 export const TRANSPOSE_LIB = existsSync(transposeLibPath) ? readFileSync(transposeLibPath, 'utf8') : null;
+const musicxmlLibPath = path.join(root, 'lib/sm_musicxml.ps');
+export const MUSICXML_LIB = existsSync(musicxmlLibPath) ? readFileSync(musicxmlLibPath, 'utf8') : null;
 
 /** The self-contained PostScript-engraver document for src (src/psdoc.js). */
 export function psEngineDoc(src, opts = {}) {
-  return selfContainedPS(src, { ...opts, engraveLib: LIB, abcLib: ABC_LIB, parseLib: opts.noParser ? null : PARSE_LIB, transposeLib: TRANSPOSE_LIB });
+  return selfContainedPS(src, { ...opts, engraveLib: LIB, abcLib: ABC_LIB, parseLib: opts.noParser ? null : PARSE_LIB, transposeLib: TRANSPOSE_LIB, musicxmlLib: opts.noParser ? null : MUSICXML_LIB });
 }
 /** Pages in a PDF pscat wrote. */
 export const pdfPages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
