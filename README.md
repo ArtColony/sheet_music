@@ -132,9 +132,11 @@ in the page. `-o song.pdf` / `.png` / `.svg` render it with the pscat CLI,
 position is rounded to two decimals with `sm-r2`, and the layout uses no
 transcendental operators). The file also carries
 [`lib/sm_abc_parse.ps`](lib/sm_abc_parse.ps), so pscat parses the embedded
-ABC too (tune by `--tune`, `%%annotation` marks included). For MusicXML the
-Score the JS parser wrote (`psLiteral`) is embedded instead, until the
-MusicXML parser moves to PostScript as well.
+ABC too (tune by `--tune`, `%%annotation` marks included), and MusicXML
+with [`lib/sm_musicxml.ps`](lib/sm_musicxml.ps). The title, composer and key
+for the file's header and the PDF's metadata, the tune list and the warnings
+come from a first PostScript run as well (`sm-score-meta`), so `sheet` and
+the editor parse nothing in JavaScript.
 
 **With pscat alone** (no Node): `pscat --pdf song.pdf --page 612x792 -e
 '(lib/sheet.ps) run (song.abc) sm-abc-engrave-file'`. [`lib/sheet.ps`](lib/sheet.ps)
