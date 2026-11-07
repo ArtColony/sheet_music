@@ -3,45 +3,59 @@
 //
 //   sheet song.abc                       -> song.pdf (next to the input)
 //   sheet song.abc -o out.pdf            PDF via the pscat command-line tool
-//   sheet song.abc -o out.png --dpi 150  PNG of page 1 (more pages: out-2.png ...)
-//   sheet song.abc -o out.ps             just the PostScript
-//   sheet song.musicxml --paper a4 --engine wasm
+//   sheet song.abc -o out.png --dpi 150  PNG of page 1 (more pages: out-002.png ...)
+//   sheet song.abc -o out.ps             the self-contained PostScript (engraves itself in pscat)
+//   sheet song.musicxml --paper a4 --engine ps-wasm
 //   sheet song.abc --transpose -2 -o song-in-Bb.pdf
-//   sheet song.abc --engine ps -o song.ps  self-contained .ps: lib/sm_abc.ps lays it out in pscat
+//   sheet song.abc --engine js -o song.pdf  the JavaScript layout (fallback)
 //   sheet song.pdf -o song.abc           get the source back out of a PDF
+//
+// The engraver is the PostScript library (lib/sm_abc.ps and friends): the
+// output .ps carries it, a short driver and the source itself, and pscat
+// parses (ABC), lays out and draws the score. MusicXML is still parsed in
+// JavaScript (src/musicxml.js) and handed over as a Score literal.
 //
 // PDFs carry their source as an attachment (src/pdfmeta.js), so a PDF made
 // here is also an input: it is read back and engraved again (or, with an
 // .abc/.musicxml output, just unpacked). --no-source leaves it out.
 // Options: --tune N (1-based, for files with several X: tunes), --paper
-// letter|a4, --staff-space PT, --breaks source|auto, --engine cli|wasm|ps|ps-wasm
-// (ps: the PostScript engraver, rendered by the CLI; ps-wasm: by the WASM build),
-// --footer TEXT, --format abc|musicxml, --transpose SEMITONES, --no-source,
-// --list (print the tunes and exit).
+// letter|a4, --staff-space PT, --breaks source|auto, --engine ps|ps-wasm|js|js-wasm
+// (ps, the default: the PostScript engraver rendered by the pscat CLI;
+// ps-wasm: by its WebAssembly build; js / js-wasm: the JavaScript layout,
+// src/layout.js, kept as a fallback; cli and wasm are older names for ps and
+// ps-wasm), --footer TEXT, --format abc|musicxml, --transpose SEMITONES,
+// --no-source, --list (print the tunes and exit).
 // The pscat binary comes from $PSCAT, else vendor/pscat/pscat
 // (npm run pscat:fetch), else `pscat` on PATH.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toPostScript, parse, finishPDF, extractSource, isPDF } from '../src/index.js';
+import { toPostScript, parse, finishPDF, extractSource, isPDF, detectFormat } from '../src/index.js';
 import { selfContainedPS } from '../src/psdoc.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const LIB = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
 export const ABC_LIB = readFileSync(path.join(root, 'lib/sm_abc.ps'), 'utf8');
-const parseLibPath = path.join(root, 'lib/sm_abc_parse.ps');
-export const PARSE_LIB = existsSync(parseLibPath) ? readFileSync(parseLibPath, 'utf8') : null;
-const transposeLibPath = path.join(root, 'lib/sm_transpose.ps');
-export const TRANSPOSE_LIB = existsSync(transposeLibPath) ? readFileSync(transposeLibPath, 'utf8') : null;
+const optional = (f) => (existsSync(path.join(root, 'lib', f)) ? readFileSync(path.join(root, 'lib', f), 'utf8') : null);
+export const PARSE_LIB = optional('sm_abc_parse.ps');
+export const TRANSPOSE_LIB = optional('sm_transpose.ps');
 
-/** The self-contained PostScript-engraver document for src (src/psdoc.js). */
+/**
+ * The self-contained PostScript-engraver document for src (src/psdoc.js):
+ * what `sheet` writes and renders by default. ABC is parsed by PostScript;
+ * the JS parser's Score is embedded only for MusicXML (or with noParser).
+ */
 export function psEngineDoc(src, opts = {}) {
-  return selfContainedPS(src, { ...opts, engraveLib: LIB, abcLib: ABC_LIB, parseLib: opts.noParser ? null : PARSE_LIB, transposeLib: TRANSPOSE_LIB });
+  const parseLib = opts.noParser ? null : PARSE_LIB;
+  const embedScore = opts.embedScore ?? (!parseLib || (opts.format || detectFormat(src)) !== 'abc');
+  return selfContainedPS(src, { ...opts, embedScore, engraveLib: LIB, abcLib: ABC_LIB, parseLib, transposeLib: TRANSPOSE_LIB });
 }
 /** Pages in a PDF pscat wrote. */
 export const pdfPages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+/** The warnings the PostScript engraver printed ("sm-abc: warning: ..." lines). */
+export const psWarnings = (out) => String(out || '').split('\n').filter((l) => l.startsWith('sm-abc: warning: ')).map((l) => l.slice(17));
 
 export function pscatPath() {
   if (process.env.PSCAT) return process.env.PSCAT;
@@ -50,13 +64,21 @@ export function pscatPath() {
   return 'pscat';
 }
 
+// --engine: which layout runs (PostScript, or the JS fallback) and which
+// pscat renders it. cli and wasm, the older names, now mean the PostScript layout.
+export const ENGINES = {
+  ps: { layout: 'ps', render: 'cli' }, 'ps-wasm': { layout: 'ps', render: 'wasm' },
+  js: { layout: 'js', render: 'cli' }, 'js-wasm': { layout: 'js', render: 'wasm' },
+  cli: { layout: 'ps', render: 'cli' }, wasm: { layout: 'ps', render: 'wasm' },
+};
+
 function usage(code) {
-  console.error('usage: sheet INPUT [-o OUT.(pdf|png|svg|ps)] [--tune N] [--paper letter|a4] [--staff-space PT] [--breaks source|auto] [--engine cli|wasm|ps|ps-wasm] [--transpose N] [--dpi N] [--footer TEXT] [--no-source] [--list]\n       sheet SCORE.pdf -o SOURCE.abc     (unpack the source a PDF carries)');
+  console.error('usage: sheet INPUT [-o OUT.(pdf|png|svg|ps)] [--tune N] [--paper letter|a4] [--staff-space PT] [--breaks source|auto] [--engine ps|ps-wasm|js|js-wasm] [--transpose N] [--dpi N] [--footer TEXT] [--no-source] [--list]\n       sheet SCORE.pdf -o SOURCE.abc     (unpack the source a PDF carries)');
   process.exit(code);
 }
 
 async function main(argv) {
-  const opts = { engine: 'cli', dpi: 150 };
+  const opts = { engine: 'ps', dpi: 150 };
   let input = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -78,6 +100,8 @@ async function main(argv) {
     else usage(2);
   }
   if (!input) usage(2);
+  const engine = ENGINES[opts.engine];
+  if (!engine) throw Error(`unknown engine "${opts.engine}" (use ps, ps-wasm, js or js-wasm)`);
   let src;
   let srcName = path.basename(input);
   const bytes = readFileSync(input);
@@ -99,54 +123,29 @@ async function main(argv) {
     return;
   }
   const out = opts.out || input.replace(/\.[^.]+$/, '') + '.pdf';
-  const finish = (pdf) => (opts.noSource ? pdf : finishPDF(pdf, r, { source: src, filename: srcName }));
-  if (opts.engine === 'ps' || opts.engine === 'ps-wasm') return psEngine(src, srcName, out, opts);
-  const r = toPostScript(src, { ...opts, lib: LIB });
-  for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
-  mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   const ext = path.extname(out).toLowerCase();
-  if (ext === '.ps') { writeFileSync(out, r.ps); console.error(`sheet: wrote ${out} (${r.pages} page${r.pages > 1 ? 's' : ''})`); return; }
-  const [W, H] = r.size;
-  if (opts.engine === 'wasm') {
-    const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
-    const renderer = await createRenderer();
-    if (ext === '.pdf') { renderer.render(r.ps, { width: W, height: H, pdf: true }); writeFileSync(out, finish(renderer.pdf())); }
-    else if (ext === '.svg') { renderer.render(r.ps, { width: W, height: H, svg: true }); writeSvgs(out, renderer.svgPages()); }
-    else throw Error('--engine wasm writes .pdf, .svg or .ps');
-  } else {
-    const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
-    try {
-      const psFile = path.join(tmp, 'score.ps');
-      writeFileSync(psFile, r.ps);
-      const flag = ext === '.pdf' ? '--pdf' : ext === '.svg' ? '--svg' : ext === '.png' ? '--png' : null;
-      if (!flag) throw Error(`unknown output type ${ext} (use .pdf, .png, .svg or .ps)`);
-      const args = ['--page', `${Math.round(W)}x${Math.round(H)}`, flag, path.resolve(out), psFile];
-      if (ext === '.png') args.unshift('--dpi', String(opts.dpi));
-      execFileSync(pscatPath(), args, { stdio: ['ignore', 'ignore', 'pipe'] });
-      if (ext === '.pdf') writeFileSync(out, finish(readFileSync(out)));
-    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  const psLayout = engine.layout === 'ps';
+  const r = psLayout ? psEngineDoc(src, opts) : toPostScript(src, { ...opts, lib: LIB });
+  // The PostScript engraver parses ABC itself and prints its warnings as it
+  // runs (relayed below). The JS parser's are shown for MusicXML, for the JS
+  // layout, and for a .ps output, which nothing runs here.
+  if (!psLayout || r.format !== 'abc' || ext === '.ps') for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
+  mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  if (ext === '.ps') {
+    writeFileSync(out, r.ps);
+    console.error(`sheet: wrote ${out} (${psLayout ? 'self-contained, engraves itself in pscat' : `${r.pages} page${r.pages > 1 ? 's' : ''}, JS engraver`})`);
+    return;
   }
-  console.error(`sheet: wrote ${out} (${r.pages} page${r.pages > 1 ? 's' : ''}${transposedNote(r)})`);
-}
-
-const transposedNote = (r) => (r.transposed ? `, transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis}: key signature of ${r.transposed.key} major` : '');
-
-// --engine ps / ps-wasm: the layout runs in PostScript (lib/sm_abc.ps)
-async function psEngine(src, srcName, out, opts) {
-  const r = psEngineDoc(src, opts);
-  for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
-  mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-  const ext = path.extname(out).toLowerCase();
-  if (ext === '.ps') { writeFileSync(out, r.ps); console.error(`sheet: wrote ${out} (self-contained, engraves in PostScript)`); return; }
   const finish = (pdf) => (opts.noSource ? pdf : finishPDF(pdf, r, { source: src, filename: srcName }));
   const [W, H] = r.size;
-  let pages = '';
-  if (opts.engine === 'ps-wasm') {
+  let pages = r.pages || 0;
+  let printed = '';
+  if (engine.render === 'wasm') {
     const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
     const renderer = await createRenderer();
-    if (ext === '.pdf') { renderer.render(r.ps, { width: W, height: H, pdf: true }); const pdf = renderer.pdf(); pages = pdfPages(pdf); writeFileSync(out, finish(pdf)); }
-    else if (ext === '.svg') { renderer.render(r.ps, { width: W, height: H, svg: true }); const s = renderer.svgPages(); pages = s.length; writeSvgs(out, s); }
-    else throw Error('--engine ps-wasm writes .pdf, .svg or .ps');
+    if (ext === '.pdf') { printed = renderer.render(r.ps, { width: W, height: H, pdf: true }).output; const pdf = renderer.pdf(); pages = pdfPages(pdf); writeFileSync(out, finish(pdf)); }
+    else if (ext === '.svg') { printed = renderer.render(r.ps, { width: W, height: H, svg: true }).output; const s = renderer.svgPages(); pages = s.length; writeSvgs(out, s); }
+    else throw Error(`--engine ${opts.engine} writes .pdf, .svg or .ps`);
   } else {
     const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
     try {
@@ -156,12 +155,16 @@ async function psEngine(src, srcName, out, opts) {
       if (!flag) throw Error(`unknown output type ${ext} (use .pdf, .png, .svg or .ps)`);
       const args = ['--page', `${Math.round(W)}x${Math.round(H)}`, flag, path.resolve(out), psFile];
       if (ext === '.png') args.unshift('--dpi', String(opts.dpi));
-      execFileSync(pscatPath(), args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      printed = execFileSync(pscatPath(), args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
       if (ext === '.pdf') { const pdf = readFileSync(out); pages = pdfPages(pdf); writeFileSync(out, finish(pdf)); }
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   }
-  console.error(`sheet: wrote ${out}${pages ? ` (${pages} page${pages > 1 ? 's' : ''}${transposedNote(r)})` : transposedNote(r) ? ` (${transposedNote(r).slice(2)})` : ''}, PostScript engraver`);
+  if (psLayout) for (const w of psWarnings(printed)) console.error(`sheet: warning: ${w}`);
+  const notes = [pages ? `${pages} page${pages > 1 ? 's' : ''}` : '', transposedNote(r)].filter(Boolean).join(', ');
+  console.error(`sheet: wrote ${out}${notes ? ` (${notes})` : ''}, ${psLayout ? 'PostScript' : 'JS'} engraver`);
 }
+
+const transposedNote = (r) => (r.transposed ? `transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis}: key signature of ${r.transposed.key} major` : '');
 
 function writeSvgs(out, svgs) {
   svgs.forEach((s, k) => writeFileSync(k === 0 ? out : out.replace(/\.svg$/, `-${k + 1}.svg`), s));
@@ -170,4 +173,3 @@ function writeSvgs(out, svgs) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch((e) => { console.error(`sheet: ${e.message}`); process.exit(1); });
 }
-void readdirSync;

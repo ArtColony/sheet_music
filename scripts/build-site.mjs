@@ -14,7 +14,8 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSy
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { toPostScript, parse, finishPDF, VERSION } from '../src/index.js';
+import { parse, finishPDF, parseAnnotations, VERSION } from '../src/index.js';
+import { psEngineDoc, pdfPages, psWarnings, ABC_LIB, PARSE_LIB, TRANSPOSE_LIB } from '../bin/sheet.mjs';
 import { mdToHtml } from './md.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,22 +39,25 @@ const samples = [];
 for (const file of order) {
   const text = readFileSync(path.join(root, 'samples', file), 'utf8');
   const base = file.replace(/\.[^.]+$/, '');
-  const r = toPostScript(text, { lib: LIB });
+  // the self-contained document `sheet` writes: pscat parses, lays out and draws
+  const r = psEngineDoc(text);
   const score = parse(text).scores[0];
   writeFileSync(path.join(dist, 'samples', base + '.ps'), r.ps);
   copyFileSync(path.join(root, 'samples', file), path.join(dist, 'samples', file));
   const page = `${Math.round(r.size[0])}x${Math.round(r.size[1])}`;
   const psFile = path.join(dist, 'samples', base + '.ps');
-  execFileSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', path.join(dist, 'samples', base + '.pdf'), psFile], { stdio: 'pipe' });
+  const printed = execFileSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', path.join(dist, 'samples', base + '.pdf'), psFile], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  for (const w of psWarnings(printed)) console.log(`${file}: warning: ${w}`);
   const pdfPath = path.join(dist, 'samples', base + '.pdf');
+  const pages = pdfPages(readFileSync(pdfPath));
   writeFileSync(pdfPath, finishPDF(readFileSync(pdfPath), r, { source: text, filename: file })); // source attached
   execFileSync(PSCAT, ['--page', page, '--dpi', '110', '--png', path.join(dist, 'samples', base + '.png'), psFile], { stdio: 'pipe' });
-  const pngs = r.pages > 1 ? Array.from({ length: r.pages }, (_, k) => `${base}-${String(k + 1).padStart(3, '0')}.png`) : [base + '.png'];
+  const pngs = pages > 1 ? Array.from({ length: pages }, (_, k) => `${base}-${String(k + 1).padStart(3, '0')}.png`) : [base + '.png'];
   samples.push({
-    file, base, text, title: r.title, pages: r.pages, pngs,
+    file, base, text, title: r.title, pages, pngs,
     format: r.format === 'musicxml' ? 'MusicXML' : 'ABC',
     composer: score.meta.composer || score.meta.origin || '',
-    notes: [...features(score), ...(r.annotations.length ? ['annotations'] : [])],
+    notes: [...features(score), ...(parseAnnotations(text).length ? ['annotations'] : [])],
     psSha: sha(r.ps), pdfSha: sha(readFileSync(path.join(dist, 'samples', base + '.pdf'))),
   });
 }
@@ -132,7 +136,7 @@ const index = shell('Sheet music with pscat', 'Deterministic sheet music engravi
 <main>
   <section class="hero"><div class="wrap">
     <h1>Sheet music, engraved in PostScript</h1>
-    <p class="lede">Write a tune in <a href="https://abcnotation.com/">ABC notation</a> (or bring MusicXML), get an engraved score as PDF. The engraver is a few thousand lines of dependency-free JavaScript that writes a PostScript program; <a href="https://github.com/PSCatLabs/pscat">pscat</a> draws it, either the command-line tool or the very same interpreter compiled to WebAssembly in your browser. Every glyph (clefs, noteheads, rests, accidentals) is drawn from PostScript paths, so no music font is involved.</p>
+    <p class="lede">Write a tune in <a href="https://abcnotation.com/">ABC notation</a> (or bring MusicXML), get an engraved score as PDF. The engraver is a PostScript library: each score is one PostScript program that carries the music as text, and <a href="https://github.com/PSCatLabs/pscat">pscat</a> parses it, lays it out and draws it, either the command-line tool or the very same interpreter compiled to WebAssembly in your browser. JavaScript only plays the music and runs the page. Every glyph (clefs, noteheads, rests, accidentals) is drawn from PostScript paths, so no music font is involved.</p>
     <p class="cta"><a class="btn" href="editor.html">Open the editor</a> <a class="btn ghost" href="sheet-music-editor-offline.html" download>Download the offline editor</a> <a class="btn ghost" href="https://github.com/ArtColony/sheet_music">Source on GitHub</a></p>
   </div></section>
 
@@ -147,10 +151,10 @@ const index = shell('Sheet music with pscat', 'Deterministic sheet music engravi
     <div>
       <h2>How it works</h2>
       <ol class="flow">
-        <li><b>Parse.</b> ABC (<code>src/abc.js</code>) or MusicXML (<code>src/musicxml.js</code>) becomes one score model with exact rational durations.</li>
-        <li><b>Lay out.</b> <code>src/layout.js</code> spaces columns by duration, justifies lines, breaks pages, beams, stacks chords and accidentals, and places lyrics, chord symbols, ties and slurs.</li>
-        <li><b>Emit PostScript.</b> One self-contained program: <code>lib/sm_engrave.ps</code> (the glyph procedures) followed by drawing calls with fixed-precision numbers.</li>
-        <li><b>Render.</b> <code>pscat --pdf</code> on the command line, or <code>createRenderer().render(ps, {pdf: true})</code> in the browser. Same interpreter, same bytes.</li>
+        <li><b>One program.</b> The score file is the library (<code>lib/sm_engrave.ps</code> glyphs, <code>lib/sm_abc.ps</code> layout, <code>lib/sm_abc_parse.ps</code>, <code>lib/sm_transpose.ps</code>), a short driver, and the ABC source itself after <code>currentfile</code>.</li>
+        <li><b>Parse.</b> PostScript reads the ABC into one score model with exact rational durations. (MusicXML is still read by <code>src/musicxml.js</code> and embedded as a PostScript literal.)</li>
+        <li><b>Lay out and draw.</b> <code>lib/sm_abc.ps</code> spaces columns by duration, justifies lines, breaks pages, beams, stacks chords and accidentals, and places lyrics, chord symbols, ties and slurs, every position rounded to two decimals.</li>
+        <li><b>Render.</b> <code>pscat --pdf</code> on the command line, or <code>createRenderer().render(ps, {pdf: true})</code> in the browser. Same interpreter, same bytes. Playback reads the notes from PostScript too (<code>sm-abc-performance</code>).</li>
       </ol>
       <pre class="cmd">npm run pscat:fetch          # the pinned pscat release, SHA-256 checked
 node bin/sheet.mjs samples/amazing-grace.abc -o amazing-grace.pdf</pre>

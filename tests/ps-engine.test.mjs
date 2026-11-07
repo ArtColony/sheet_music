@@ -1,7 +1,9 @@
-// The PostScript engraver (lib/sm_abc.ps, `sheet --engine ps`): the
-// self-contained .ps must render lint-clean with the pinned pscat CLI,
+// The PostScript engraver (lib/sm_abc.ps, what `sheet` writes by default):
+// the self-contained .ps (psEngineDoc: ABC parsed by PostScript, MusicXML
+// as an embedded Score) must render lint-clean with the pinned pscat CLI,
 // reproduce byte for byte, give exactly the same PDF in the WebAssembly
-// build, and match its golden hashes (tests/golden.json, key psEngine).
+// build, match its golden hashes (tests/golden.json, key psEngine), and draw
+// exactly the JS engraver's pages (src/layout.js, kept as the fallback).
 //
 // After an intended change to the output: node scripts/update-golden.mjs
 import { test } from 'node:test';
@@ -14,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { selfContainedPS, END_MARK } from '../src/psdoc.js';
 import { toPostScript } from '../src/index.js';
+import { psEngineDoc } from '../bin/sheet.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const engraveLib = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
@@ -24,8 +27,9 @@ const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
 const PLATFORM = `${process.platform}-${process.arch}`;
 const PS_ENGINE_SAMPLES = readdirSync(path.join(root, 'samples')).filter((f) => /\.(abc|musicxml)$/.test(f)).sort();
 const pages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
-// the golden document never depends on whether lib/sm_abc_parse.ps exists yet
+// a bare document (engraver + layout, the JS Score embedded), and the default one
 const doc = (src, extra = {}) => selfContainedPS(src, { engraveLib, abcLib, ...extra });
+const full = (src) => psEngineDoc(src);
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-psengine-'));
 process.on('exit', () => rmSync(tmp, { recursive: true, force: true }));
@@ -33,7 +37,7 @@ process.on('exit', () => rmSync(tmp, { recursive: true, force: true }));
 test('self-contained .ps: deterministic text, source verbatim after the driver', () => {
   for (const f of PS_ENGINE_SAMPLES) {
     const src = readFileSync(path.join(root, 'samples', f), 'utf8');
-    const a = doc(src), b = doc(src);
+    const a = full(src), b = full(src);
     assert.equal(a.ps, b.ps);
     assert.ok(a.ps.includes(`(${END_MARK}) sm-abc-readsrc\n${src.replace(/\r\n?/g, '\n').trimEnd()}\n${END_MARK}\n`), `${f}: source is embedded verbatim`);
     assert.equal(sha(a.ps), golden.psEngine && golden.psEngine.ps[f], `${f}: PostScript changed; if intended run node scripts/update-golden.mjs`);
@@ -54,7 +58,7 @@ test('PostScript engraver: CLI and WebAssembly agree, PDFs reproduce, goldens ma
   const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
   const r = await createRenderer();
   for (const f of PS_ENGINE_SAMPLES) {
-    const { ps, size } = doc(readFileSync(path.join(root, 'samples', f), 'utf8'));
+    const { ps, size } = full(readFileSync(path.join(root, 'samples', f), 'utf8'));
     const psFile = path.join(tmp, f + '.ps');
     writeFileSync(psFile, ps);
     const page = `${Math.round(size[0])}x${Math.round(size[1])}`;
@@ -82,7 +86,7 @@ test('PostScript engraver: a long score breaks into the same pages as the JS eng
   const src = [...tw.slice(0, k + 1), ...Array(12).fill(body), 'W:Words after the tune, on the last page.', ''].join('\n');
   const js = toPostScript(src, { lib: engraveLib });
   assert.ok(js.pages > 1, 'the test score should need several pages');
-  const { ps, size } = doc(src);
+  const { ps, size } = full(src);
   const psFile = path.join(tmp, 'long.ps');
   writeFileSync(psFile, ps);
   const out = path.join(tmp, 'long.pdf');
@@ -93,4 +97,23 @@ test('PostScript engraver: a long score breaks into the same pages as the JS eng
   const r = await createRenderer();
   r.render(ps, { width: size[0], height: size[1], pdf: true });
   assert.ok(Buffer.from(r.pdf()).equals(p1), 'WebAssembly PDF differs from the CLI\'s');
+});
+
+test('PostScript engraver draws exactly the JS engraver\'s pages (every sample, 150 dpi)', { skip: !existsSync(path.join(root, 'vendor/pscat-npm/node.js')) && 'pscat npm build not installed' }, async () => {
+  // Until src/layout.js is retired (#8), the two layouts must agree pixel for
+  // pixel; the multi-page case is the test above.
+  const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
+  const r = await createRenderer();
+  for (const f of PS_ENGINE_SAMPLES) {
+    const src = readFileSync(path.join(root, 'samples', f), 'utf8');
+    const js = toPostScript(src, { lib: engraveLib });
+    const ps = full(src);
+    assert.equal(js.pages, 1, `${f}: the comparison renders the first page only`);
+    const a = r.render(js.ps, { width: js.size[0], height: js.size[1], dpi: 150 });
+    const b = r.render(ps.ps, { width: ps.size[0], height: ps.size[1], dpi: 150 });
+    assert.deepEqual([b.width, b.height], [a.width, a.height], `${f}: page size`);
+    let n = 0;
+    for (let i = 0; i < a.data.length; i++) if (a.data[i] !== b.data[i]) n++;
+    assert.equal(n, 0, `${f}: ${n} channel values differ between the JS and PostScript engravers`);
+  }
 });
