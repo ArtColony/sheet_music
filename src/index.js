@@ -115,6 +115,41 @@ export function tuneTranspose(src, tuneSrc, format) {
 }
 
 /**
+ * What lib/sm_abc_parse.ps sm-score-meta prints, worked out by the JS parser:
+ * the reference tests/ps-meta.test.mjs checks the PostScript against, and
+ * the metadata of the Score-literal fallback (src/psdoc.js). Keys:
+ * annotations (the tune's %%annotation marks, with line and color), composer,
+ * error (null, or why there is no score), format, sourceTranspose (the
+ * tune's %%transpose), title, transpose (the total: options.transpose plus
+ * sourceTranspose), transposed ({ key, semis } or null), tune, tunes
+ * ([{ index, title, x }]), warnings.
+ */
+export function scoreMeta(src, options = {}) {
+  const format = options.format || detectFormat(src);
+  const tune = Math.trunc(options.tune || 0);
+  const semis = Math.trunc(options.transpose || 0);
+  const out = { annotations: [], composer: null, error: null, format, sourceTranspose: 0, title: null, transpose: semis, transposed: null, tune, tunes: [], warnings: [] };
+  let parsed;
+  try { parsed = parse(src, { format }); } catch (e) { out.error = e.message; return out; }
+  out.warnings = parsed.warnings;
+  const texts = format === 'abc' ? splitTunes(src) : [src];
+  out.tunes = parsed.scores.map((s, index) => {
+    const m = format === 'abc' ? /^X:(.*)/.exec(texts[index]) : null;
+    return { index, title: s.meta.title || 'Untitled', x: m ? m[1].trim() : null };
+  });
+  const score = parsed.scores[tune];
+  if (!score || tune < 0) { out.error = `no tune number ${tune + 1} (the input has ${parsed.scores.length})`; return out; }
+  const tuneSrc = texts[tune] || '';
+  out.sourceTranspose = tuneTranspose(src, tuneSrc, format);
+  out.transpose = out.sourceTranspose + semis;
+  out.title = score.meta.title || 'Untitled';
+  out.composer = score.meta.composer || '';
+  if (out.transpose) out.transposed = transposeScore(score, out.transpose).transposed;
+  out.annotations = parseAnnotations(tuneSrc).map((a) => ({ color: a.color, h: a.h, line: a.line, page: a.page, rgb: a.rgb, text: a.text, type: a.type, w: a.w, x: a.x, y: a.y }));
+  return out;
+}
+
+/**
  * What a tune sounds like (src/play.js), with the same tune choice and
  * transposition as toPostScript: { notes, length, tempo, staves, title }.
  */

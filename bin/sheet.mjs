@@ -35,7 +35,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toPostScript, parse, finishPDF, extractSource, isPDF, detectFormat, midiFile, performanceOf } from '../src/index.js';
-import { selfContainedPS } from '../src/psdoc.js';
+import { selfContainedPS, metaPS, readMeta } from '../src/psdoc.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const LIB = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
@@ -47,17 +47,43 @@ export const PERFORM_LIB = optional('sm_perform.ps');
 export const MUSICXML_LIB = optional('sm_musicxml.ps');
 
 /**
+ * Run a PostScript program that only prints (it draws nothing) and return
+ * its stdout: with the pscat CLI, or with run(ps) when given (the wasm build).
+ */
+export function runPrinting(ps, run) {
+  if (run) return run(ps);
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
+  try {
+    const psFile = path.join(tmp, 'print.ps');
+    writeFileSync(psFile, ps);
+    return execFileSync(pscatPath(), ['--page', '8x8', '--pdf', path.join(tmp, 'blank.pdf'), psFile], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 256 << 20 });
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+}
+/**
+ * What PostScript knows about src (lib/sm_abc_parse.ps sm-score-meta):
+ * title, composer, the key after transposition, the tunes, the annotations
+ * and the warnings, for options tune / transpose / format. run as for runPrinting.
+ */
+export function psMeta(src, opts = {}, run) {
+  if (!PARSE_LIB) throw Error('lib/sm_abc_parse.ps is missing');
+  return readMeta(runPrinting(metaPS(src, { ...opts, abcLib: ABC_LIB, parseLib: PARSE_LIB, transposeLib: TRANSPOSE_LIB, musicxmlLib: MUSICXML_LIB }), run));
+}
+
+/**
  * The self-contained PostScript-engraver document for src (src/psdoc.js):
  * what `sheet` writes and renders by default. ABC is parsed by PostScript;
- * MusicXML too (lib/sm_musicxml.ps); the JS parser's Score is embedded only
- * when no PostScript parser is available (or with noParser).
+ * MusicXML too (lib/sm_musicxml.ps), and the document's metadata comes from
+ * a first PostScript run (psMeta; opts.meta when the caller has it, opts.run
+ * to run it in the wasm build). The JS parser's Score (and metadata) is
+ * embedded only when no PostScript parser is available (or with noParser).
  */
 export function psEngineDoc(src, opts = {}) {
   const parseLib = opts.noParser ? null : PARSE_LIB;
   const musicxmlLib = opts.noParser ? null : MUSICXML_LIB;
   const format = opts.format || detectFormat(src);
   const embedScore = opts.embedScore ?? (!parseLib || (format !== 'abc' && !(format === 'musicxml' && musicxmlLib)));
-  return selfContainedPS(src, { ...opts, embedScore, engraveLib: LIB, abcLib: ABC_LIB, parseLib, transposeLib: TRANSPOSE_LIB, performLib: PERFORM_LIB, musicxmlLib });
+  const meta = opts.meta || (embedScore || opts.perform ? null : psMeta(src, opts, opts.run));
+  return selfContainedPS(src, { ...opts, meta, embedScore, engraveLib: LIB, abcLib: ABC_LIB, parseLib, transposeLib: TRANSPOSE_LIB, performLib: PERFORM_LIB, musicxmlLib });
 }
 /** The performance JSON line a perform document printed (sm-abc-performance). */
 export function performanceFromOutput(out) {
@@ -131,19 +157,22 @@ async function main(argv) {
       return;
     }
   } else src = bytes.toString('utf8');
+  const wasmRun = engine.render === 'wasm' ? await wasmPrinter() : undefined;
   if (opts.list) {
-    parse(src, opts).scores.forEach((s, k) => console.log(`${k + 1}\t${s.meta.title || 'Untitled'}`));
+    const tunes = engine.layout === 'js' ? parse(src, opts).scores.map((s) => s.meta.title || 'Untitled')
+      : psMeta(src, { format: opts.format }, wasmRun).tunes.map((t) => t.title);
+    tunes.forEach((t, k) => console.log(`${k + 1}\t${t}`));
     return;
   }
   const out = opts.out || input.replace(/\.[^.]+$/, '') + '.pdf';
   const ext = path.extname(out).toLowerCase();
   const psLayout = engine.layout === 'ps';
   if (ext === '.mid' || ext === '.midi') return writeMidi(src, out, opts, engine);
-  const r = psLayout ? psEngineDoc(src, opts) : toPostScript(src, { ...opts, lib: LIB });
-  // The PostScript engraver parses ABC itself and prints its warnings as it
-  // runs (relayed below). The JS parser's are shown for MusicXML, for the JS
-  // layout, and for a .ps output, which nothing runs here.
-  if (!psLayout || r.format !== 'abc' || ext === '.ps') for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
+  const r = psLayout ? psEngineDoc(src, { ...opts, run: wasmRun }) : toPostScript(src, { ...opts, lib: LIB });
+  // The PostScript engraver prints its warnings as it runs (relayed below).
+  // For a .ps output, which nothing runs here, they come from the metadata
+  // run (r.warnings, sm-score-meta); the JS layout has its own.
+  if (!psLayout || ext === '.ps') for (const w of r.warnings) console.error(`sheet: warning: ${w}`);
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   if (ext === '.ps') {
     writeFileSync(out, r.ps);
@@ -155,8 +184,7 @@ async function main(argv) {
   let pages = r.pages || 0;
   let printed = '';
   if (engine.render === 'wasm') {
-    const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
-    const renderer = await createRenderer();
+    const renderer = await wasmRenderer();
     if (ext === '.pdf') { printed = renderer.render(r.ps, { width: W, height: H, pdf: true }).output; const pdf = renderer.pdf(); pages = pdfPages(pdf); writeFileSync(out, finish(pdf)); }
     else if (ext === '.svg') { printed = renderer.render(r.ps, { width: W, height: H, svg: true }).output; const s = renderer.svgPages(); pages = s.length; writeSvgs(out, s); }
     else throw Error(`--engine ${opts.engine} writes .pdf, .svg or .ps`);
@@ -185,23 +213,22 @@ async function writeMidi(src, out, opts, engine) {
   if (engine.layout === 'js') perf = performanceOf(src, opts);
   else {
     const doc = psEngineDoc(src, { ...opts, perform: true });
-    let printed;
-    if (engine.render === 'wasm') {
-      const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
-      printed = (await createRenderer()).render(doc.ps, { width: 8, height: 8 }).output;
-    } else {
-      const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
-      try {
-        const psFile = path.join(tmp, 'perform.ps');
-        writeFileSync(psFile, doc.ps);
-        printed = execFileSync(pscatPath(), ['--page', '8x8', '--pdf', path.join(tmp, 'blank.pdf'), psFile], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 256 << 20 });
-      } finally { rmSync(tmp, { recursive: true, force: true }); }
-    }
-    perf = performanceFromOutput(printed);
+    perf = performanceFromOutput(runPrinting(doc.ps, engine.render === 'wasm' ? await wasmPrinter() : undefined));
   }
   mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, midiFile(perf, { title: perf.title }));
   console.error(`sheet: wrote ${out} (${perf.notes.length} notes, ${perf.staves} track${perf.staves > 1 ? 's' : ''})`);
+}
+
+// the pscat WebAssembly build (one renderer per run), and a runPrinting runner on it
+let wasm = null;
+async function wasmRenderer() {
+  if (!wasm) { const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js')); wasm = await createRenderer(); }
+  return wasm;
+}
+async function wasmPrinter() {
+  const r = await wasmRenderer();
+  return (ps) => r.render(ps, { width: 8, height: 8 }).output;
 }
 
 const transposedNote = (r) => (r.transposed ? `transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis}: key signature of ${r.transposed.key} major` : '');
