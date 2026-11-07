@@ -18,11 +18,13 @@ one .ps file: lib/*.ps + driver + the ABC text ──pscat──▶ parse ▶ la
 ```
 
 The engraver is the PostScript library in [`lib/`](lib/): pscat parses the
-ABC or MusicXML, lays out and draws the score. JavaScript builds the document, plays the
-notes and runs the web page. The original JavaScript layout (`src/layout.js`,
-`--engine js`) was retired once the PostScript one matched it pixel for pixel
-on every sample (#10); the tests now hold golden hashes of the PostScript
-engraver's documents and PDFs.
+ABC or MusicXML, transposes, lays out and draws the score, and works out the
+notes it sounds. JavaScript only builds the document, turns those notes into
+sound or a MIDI file, and runs the web page. The original JavaScript layout
+(`src/layout.js`, `--engine js`) and parsers (`src/abc.js`, `src/musicxml.js`)
+were retired once the PostScript ones matched them on every sample (#10);
+the tests hold golden hashes of the PostScript engraver's documents and PDFs,
+and the retired parsers' results, frozen, for the PostScript parsers to match.
 
 - **Deterministic.** Durations are exact rationals; every coordinate is written
   with fixed precision, with no locale or clock involved. The same input gives
@@ -33,10 +35,12 @@ engraver's documents and PDFs.
 - **No music font.** Clefs, noteheads, rests, accidentals, flags, ties and the brace
   are PostScript paths in [`lib/sm_engrave.ps`](lib/sm_engrave.ps). Text uses
   only the PostScript standard 35 fonts that every pscat build has.
-- **ABC parser in PostScript too.** [`lib/sm_abc_parse.ps`](lib/sm_abc_parse.ps)
-  (`(abc text) sm-abc-parse`, `(file.abc) sm-abc-parse-file`) builds inside
-  pscat the same Score the JS parser builds; `tests/ps-parse.test.mjs` checks
-  every ABC sample against `src/abc.js`.
+- **Parsers in PostScript.** [`lib/sm_abc_parse.ps`](lib/sm_abc_parse.ps)
+  (`(abc text) sm-abc-parse`, `(file.abc) sm-abc-parse-file`) and
+  [`lib/sm_musicxml.ps`](lib/sm_musicxml.ps) (`sm-musicxml-parse`) build the
+  Score inside pscat. `tests/ps-parse.test.mjs` and `tests/ps-musicxml.test.mjs`
+  check every sample and fixture against what the retired JS parsers built
+  (`tests/fixtures/reference/`).
 - **No dependencies.** Plain ES modules, Node 22+, and the pinned pscat release.
 
 ## Install the plugin (Claude Code, ChatGPT / Codex)
@@ -167,7 +171,8 @@ engraver's (checked at 150 and 600 dpi) when that was retired, and
 [`lib/sm_perform.ps`](lib/sm_perform.ps) `sm-abc-performance` prints them as
 JSON events (repeats, endings, ties, exact times), and the editor and
 `-o song.mid` only turn them into sound or a MIDI file
-(`tests/ps-perform.test.mjs`: the same events as `src/play.js`).
+(`tests/ps-perform.test.mjs`: the same events the retired `src/play.js`
+`performance()` gave).
 
 ## The editor
 
@@ -223,7 +228,7 @@ project and dedicated to the public domain (CC0 1.0); provenance in
 ## Development
 
 ```sh
-npm test                    # parser units, golden hashes, CLI/WASM PDF parity
+npm test                    # parsers vs. the frozen references, golden hashes, CLI/WASM PDF parity
 node scripts/render-samples.mjs   # renders/*.png + renders/contact-sheet.png: look at them
 node scripts/update-golden.mjs    # after an intended change to the output
 npm run build               # dist/ (the GitHub Pages site)

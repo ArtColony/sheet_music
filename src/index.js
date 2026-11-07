@@ -1,96 +1,24 @@
-// Public API, shared by the Node command line and the browser editor:
-// parsing to the Score model, transposition, playback and MIDI, the source
-// carried in PDFs, and reader's annotations.
+// Public API, shared by the Node command line and the browser editor: the
+// format of a text, MIDI from the notes PostScript plays, the source carried
+// in PDFs, and editing the reader's annotations in the source.
 //
-// The engraving itself is PostScript (lib/sm_abc.ps and friends): see
-// src/psdoc.js selfContainedPS, which writes one self-contained document
-// that pscat (CLI or WebAssembly) renders to PNG, SVG or PDF.
-import { parseABC, splitTunes } from './abc.js';
-import { parseMusicXML } from './musicxml.js';
+// Parsing, layout, transposition and playback are PostScript (lib/*.ps):
+// src/psdoc.js selfContainedPS writes one self-contained document that pscat
+// (CLI or WebAssembly) parses and renders to PNG, SVG or PDF, and metaPS one
+// that prints what the score is (title, tunes, annotations, warnings).
 import { PAPERS } from './paper.js';
 import { text as pstext, psLiteral } from './ps.js';
-import { transposeScore, sourceTranspose, transposeChord, fifthsShift } from './transpose.js';
 import { embedSource, extractSource, isPDF } from './pdfmeta.js';
-import { performance as perform, midiFile, wholeSeconds, playOrder } from './play.js';
+import { midiFile, wholeSeconds } from './play.js';
 
 export const VERSION = '0.1.0';
-export { parseABC, parseMusicXML, PAPERS, transposeScore, transposeChord, fifthsShift, embedSource, extractSource, isPDF, midiFile, wholeSeconds, playOrder };
+export { PAPERS, embedSource, extractSource, isPDF, midiFile, wholeSeconds };
 
-/** 'abc' or 'musicxml', from the text itself. */
+/** 'abc' or 'musicxml', from the text itself (lib/sm_abc_parse.ps tells them apart the same way). */
 export function detectFormat(src) {
   const head = src.slice(0, 2000).trimStart();
   if (head.startsWith('<?xml') || /<score-partwise|<score-timewise/.test(head)) return 'musicxml';
   return 'abc';
-}
-
-/** Parse any supported notation into Scores: { scores, warnings, format }. */
-export function parse(src, { format } = {}) {
-  const fmt = format || detectFormat(src);
-  if (fmt === 'musicxml') {
-    const r = parseMusicXML(src);
-    return { scores: [r.score], warnings: r.warnings, format: fmt };
-  }
-  if (fmt !== 'abc') throw Error(`unknown format "${fmt}" (use abc or musicxml)`);
-  return { ...parseABC(src), format: fmt };
-}
-
-// %%transpose in the tune, else in the ABC file header (before the first X:)
-// (lib/sm_abc_parse.ps sm-abc-tune-transpose is the PostScript port)
-export function tuneTranspose(src, tuneSrc, format) {
-  const own = sourceTranspose(tuneSrc);
-  if (own || format !== 'abc') return own;
-  const x = /^X:/m.exec(src);
-  return x ? sourceTranspose(src.slice(0, x.index)) : 0;
-}
-
-/**
- * What lib/sm_abc_parse.ps sm-score-meta prints, worked out by the JS parser:
- * the reference tests/ps-meta.test.mjs checks the PostScript against, and
- * the metadata of the Score-literal fallback (src/psdoc.js). Keys:
- * annotations (the tune's %%annotation marks, with line and color), composer,
- * error (null, or why there is no score), format, sourceTranspose (the
- * tune's %%transpose), title, transpose (the total: options.transpose plus
- * sourceTranspose), transposed ({ key, semis } or null), tune, tunes
- * ([{ index, title, x }]), warnings.
- */
-export function scoreMeta(src, options = {}) {
-  const format = options.format || detectFormat(src);
-  const tune = Math.trunc(options.tune || 0);
-  const semis = Math.trunc(options.transpose || 0);
-  const out = { annotations: [], composer: null, error: null, format, sourceTranspose: 0, title: null, transpose: semis, transposed: null, tune, tunes: [], warnings: [] };
-  let parsed;
-  try { parsed = parse(src, { format }); } catch (e) { out.error = e.message; return out; }
-  out.warnings = parsed.warnings;
-  const texts = format === 'abc' ? splitTunes(src) : [src];
-  out.tunes = parsed.scores.map((s, index) => {
-    const m = format === 'abc' ? /^X:(.*)/.exec(texts[index]) : null;
-    return { index, title: s.meta.title || 'Untitled', x: m ? m[1].trim() : null };
-  });
-  const score = parsed.scores[tune];
-  if (!score || tune < 0) { out.error = `no tune number ${tune + 1} (the input has ${parsed.scores.length})`; return out; }
-  const tuneSrc = texts[tune] || '';
-  out.sourceTranspose = tuneTranspose(src, tuneSrc, format);
-  out.transpose = out.sourceTranspose + semis;
-  out.title = score.meta.title || 'Untitled';
-  out.composer = score.meta.composer || '';
-  if (out.transpose) out.transposed = transposeScore(score, out.transpose).transposed;
-  out.annotations = parseAnnotations(tuneSrc).map((a) => ({ color: a.color, h: a.h, line: a.line, page: a.page, rgb: a.rgb, text: a.text, type: a.type, w: a.w, x: a.x, y: a.y }));
-  return out;
-}
-
-/**
- * What a tune sounds like (src/play.js), with the same tune choice and
- * transposition as the engraving (src/psdoc.js): { notes, length, tempo, staves, title }.
- */
-export function performanceOf(src, options = {}) {
-  const parsed = parse(src, options);
-  const tune = options.tune || 0;
-  const score = parsed.scores[tune];
-  if (!score) throw Error(`no tune number ${tune + 1}`);
-  const tuneSrc = parsed.format === 'abc' ? splitTunes(src)[tune] || '' : src;
-  const semis = tuneTranspose(src, tuneSrc, parsed.format) + Math.trunc(options.transpose || 0);
-  if (semis) transposeScore(score, semis);
-  return { ...perform(score), title: score.meta.title || 'Untitled' };
 }
 
 /**
@@ -120,31 +48,10 @@ export { pstext, psLiteral };
 // (in MusicXML:   <!-- %%annotation ... -->). type is text, circle (x y w h:
 // the box the ellipse fills) or highlight (x y w h). Positions are points
 // from the page's lower-left corner. Colour: a name below or #rrggbb.
+// PostScript reads them (lib/sm_abc_parse.ps; sm-score-meta lists them with
+// their source lines); these functions only write and remove the lines.
 export const ANNOT_COLORS = { red: '#c0392b', blue: '#1f5fbf', green: '#2e7d32', orange: '#d35400', purple: '#7b3fa0', yellow: '#e0b000', black: '#222222' };
 const ANNOT_RE = /^[ \t]*(?:<!--[ \t]*)?%%annotation[ \t]+(.*?)[ \t]*(?:-->)?[ \t]*$/;
-
-function hexRgb(c) {
-  const hex = ANNOT_COLORS[c] || c;
-  const m = /^#([0-9a-fA-F]{6})$/.exec(hex || '');
-  if (!m) return [0.75, 0.22, 0.17];
-  const n = parseInt(m[1], 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255].map((v) => Math.round(v * 1000) / 1000);
-}
-
-/** Every %%annotation in a text: [{ line, page, type, x, y, w, h, color, rgb, text }]. */
-export function parseAnnotations(src) {
-  const out = [];
-  String(src).replace(/\r\n?/g, '\n').split('\n').forEach((l, line) => {
-    const m = ANNOT_RE.exec(l);
-    if (!m) return;
-    const kv = {};
-    m[1].replace(/(\w+)=(?:"((?:[^"\\]|\\.)*)"|(\S+))/g, (_, k, q, v) => { kv[k] = q !== undefined ? q.replace(/\\(.)/g, '$1') : v; return ''; });
-    const n = (k, d = 0) => (Number.isFinite(parseFloat(kv[k])) ? parseFloat(kv[k]) : d);
-    const type = ['text', 'circle', 'highlight'].includes(kv.type) ? kv.type : 'text';
-    out.push({ line, page: Math.max(1, Math.round(n('page', 1))), type, x: n('x'), y: n('y'), w: n('w', 40), h: n('h', 20), color: kv.color || (type === 'highlight' ? 'yellow' : 'red'), rgb: hexRgb(kv.color || (type === 'highlight' ? 'yellow' : 'red')), text: kv.text || '' });
-  });
-  return out;
-}
 
 const r1 = (v) => Math.round(v * 10) / 10;
 /** The source line for an annotation (format: 'abc' or 'musicxml'). */
@@ -155,11 +62,6 @@ export function annotationLine(a, format = 'abc') {
   if (a.type === 'text' || !a.type) parts.push(`text="${String(a.text || '').replace(/["\\]/g, (c) => '\\' + c).replace(/\n/g, ' ')}"`);
   const body = `%%annotation ${parts.join(' ')}`;
   return format === 'musicxml' ? `<!-- ${body.replace(/--/g, '- -')} -->` : body;
-}
-
-/** The %%annotation marks of tune `tune` (0-based) of a source, lines counted from that tune's X: (as removeAnnotation takes them). */
-export function tuneAnnotations(src, tune = 0) {
-  return parseAnnotations(detectFormat(src) === 'abc' ? splitTunes(src)[tune] || '' : src);
 }
 
 /** Insert an annotation into the source: at the end of tune `tune` (ABC) or before </score-partwise>. */
@@ -178,7 +80,7 @@ export function addAnnotation(src, a, { tune = 0 } = {}) {
   return lines.join('\n');
 }
 
-/** Remove the annotation on source line `line` (0-based, from parseAnnotations of the same text). */
+/** Remove the annotation on source line `line` (0-based, counted from tune `tune`'s X: line, as sm-score-meta's annotations give it). */
 export function removeAnnotation(src, line, tune = 0) {
   const fmt = detectFormat(src);
   const lines = src.replace(/\r\n?/g, '\n').split('\n');

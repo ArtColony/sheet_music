@@ -1,15 +1,15 @@
 %!PS
 % sm_transpose.ps -- transpose a Score dict by a number of semitones.
 %
-% Part of ArtColony/sheet_music (MIT). A port of src/transpose.js: the
-% Score is the structure lib/sm_abc_parse.ps builds (and src/ps.js psLiteral
-% writes); tests/ps-transpose.test.mjs checks, sample by sample and interval
-% by interval, that the result equals the JS transposeScore's.
+% Part of ArtColony/sheet_music (MIT). It began as a port of
+% src/transpose.js (retired in #10): the Score is the structure
+% lib/sm_abc_parse.ps and lib/sm_musicxml.ps build; tests/ps-transpose.test.mjs
+% checks, sample by sample and interval by interval, that the result equals
+% the retired JS transposeScore's (tests/fixtures/reference/transpose.json).
 %
 % Public entry points
 %   score semis sm-score-transpose -> score
-%       Transposes the score IN PLACE (the same dict comes back, modified, as
-%       transposeScore does in JS) by semis semitones (any integer; a real is
+%       Transposes the score IN PLACE (the same dict comes back, modified) by semis semitones (any integer; a real is
 %       truncated, null or 0 leaves the score untouched). Sets
 %       score /transposed << /semis semis /key (G) >>: the new major key name
 %       of the first key signature, e.g. (Bb), (F#).

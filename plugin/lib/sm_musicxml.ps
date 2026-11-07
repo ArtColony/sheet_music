@@ -1,20 +1,19 @@
 %!PS
 % sm_musicxml.ps -- MusicXML (score-partwise) -> Score dict, entirely in PostScript.
 %
-% Part of ArtColony/sheet_music (MIT). A port of src/musicxml.js (its XML
-% reader parseXML and its mapping parseMusicXML) plus the half of
-% src/score.js finalizeScore a MusicXML score needs: the dict it builds is
-% psLiteral(parseMusicXML(src).score), the same Score structure the ABC
-% parser (lib/sm_abc_parse.ps) builds, so lib/sm_abc.ps's sm-abc-engrave
-% lays it out unchanged. tests/ps-musicxml.test.mjs checks that against the
-% JS parser for every MusicXML sample and fixture.
+% Part of ArtColony/sheet_music (MIT). The MusicXML parser: an XML reader
+% and the mapping to the same Score structure the ABC parser
+% (lib/sm_abc_parse.ps) builds, so lib/sm_abc.ps's sm-abc-engrave lays it
+% out unchanged. It began as a port of the JavaScript parser
+% (src/musicxml.js, retired in #10); tests/ps-musicxml.test.mjs checks it
+% against that parser's frozen results for every MusicXML sample and
+% fixture (tests/fixtures/reference/musicxml-parse.json).
 %
 % Public entry points
 %   (xml text) sm-musicxml-parse       -> Score
 %   (path.musicxml) sm-musicxml-parse-file -> Score
 %   sm-musicxml-warnings               -> [(text) ...] what the last parse
-%                                         skipped or approximated, as in
-%                                         parseMusicXML's warnings
+%                                         skipped or approximated
 %   sm-musicxml-error                  -> (text) | null   why the last parse
 %                                         failed. A failed parse raises
 %                                         syntaxerror (the offending command
@@ -32,7 +31,7 @@
 %   lib/sheet.ps adds sm-musicxml-engrave-here, sm-musicxml-here and the
 %   check helpers sm-musicxml-check-string / sm-musicxml-check-file.
 %
-% Coverage: what src/musicxml.js reads -- parts and multi-staff parts, one
+% Coverage: parts and multi-staff parts, one
 % voice per staff (the first voice found; others dropped with a warning),
 % keys, meters (common/cut, a+b, senza-misura), clefs, notes, rests, measure
 % rests, chords, dots, ties, slurs, tuplets, beams (or automatic beaming when
@@ -808,7 +807,7 @@ sm-mxp-dict begin
 } bind def
 
 % ================================================================ finalisation
-% src/score.js finalizeScore for typed events: the parse's lists become
+% For typed events (as the ABC parser finishes its Score): the parse's lists become
 % arrays, staves' measures become score measures, empty staves get a
 % whole-measure rest, then measure numbers, endings and tuplet groups.
 /sm-mxp-fixev { % ev -> -
@@ -892,7 +891,7 @@ sm-mxp-dict begin
 } bind def
 
 % ================================================================ the score
-% src sm-mxp-main score   (parseMusicXML)
+% src sm-mxp-main score
 /sm-mxp-main {
   sm-mxp-xml /sm-mxp-doc exch def
   /sm-mxp-warns sm-mxp-lnew def

@@ -1,15 +1,15 @@
 %!PS
 % sm_perform.ps -- what a Score sounds like: its notes as JSON events.
 %
-% Part of ArtColony/sheet_music (MIT). A port of src/play.js performance():
-% repeats and 1st/2nd endings are played out, ties join notes, pitches come
+% Part of ArtColony/sheet_music (MIT). Playback events (it began as a port
+% of src/play.js performance(), retired in #10): repeats and 1st/2nd endings are played out, ties join notes, pitches come
 % from the key signature and the accidentals carried through the bar, as
 % written. Grace notes, D.C./D.S. and dynamics are not performed. Times are
 % exact fractions of a whole note from the start, [num den] (reduced), so the
 % events are the same in every pscat build; the caller turns them into
 % seconds with the tempo, and into sound or a MIDI file (src/play.js
-% midiFile). tests/ps-perform.test.mjs checks that the events equal play.js's
-% for every sample.
+% midiFile). tests/ps-perform.test.mjs checks that the events equal the
+% retired JS performance()'s for every sample (tests/fixtures/reference/perform.json).
 %
 % Public entry points
 %   (abc text) [options] sm-abc-performance -
@@ -23,7 +23,7 @@
 %       text the tune's %%transpose line, else the file header's, adds to
 %       it), as for sm-abc-engrave. Prints nothing else (no warnings).
 %       MusicXML text works too (lib/sm_musicxml.ps, run on demand): told
-%       apart as src/index.js detectFormat does, or by options /format (musicxml).
+%       apart by the text's start (<?xml, <score-partwise), or by options /format (musicxml).
 %   (path.abc) [options] sm-abc-performance-file -   the same for a file
 %   score sm-score-performance perf
 %       the performance as a dictionary (the same keys), printing nothing
@@ -282,7 +282,7 @@ sm-pf-dict begin
   } stopped cleartomark pop } ifelse
 } bind def
 
-% text sm-pf-isxml bool : MusicXML rather than ABC (src/index.js detectFormat:
+% text sm-pf-isxml bool : MusicXML rather than ABC (as src/index.js detectFormat:
 % the first 2000 bytes, leading white space skipped, start with <?xml or hold
 % <score-partwise or <score-timewise)
 /sm-pf-isxml {

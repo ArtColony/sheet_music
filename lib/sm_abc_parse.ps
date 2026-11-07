@@ -1,11 +1,11 @@
 %!PS
 % sm_abc_parse.ps -- ABC notation -> Score dict, entirely in PostScript.
 %
-% Part of ArtColony/sheet_music (MIT). A port of src/abc.js + the ABC half
-% of src/score.js finalizeScore: the dict it builds is the same structure as
-% psLiteral(parse(src).scores[0]) from src/index.js (see the Score model in
-% the header of src/score.js). tests/ps-parse.test.mjs checks that, sample by
-% sample, against the JS parser.
+% Part of ArtColony/sheet_music (MIT). The ABC parser: it builds the Score
+% dict lib/sm_abc.ps lays out (the model is in docs/postscript-api.md, "The
+% Score"). It began as a port of the JavaScript parser (src/abc.js, retired
+% in #10); tests/ps-parse.test.mjs checks it, sample by sample, against that
+% parser's frozen results (tests/fixtures/reference/abc-parse.json).
 %
 % Public entry points
 %   (abc text) sm-abc-parse          -> Score        first tune (X: block)
@@ -14,7 +14,7 @@
 %   (path.abc) sm-abc-parse-file-all -> [Score ...]
 %   sm-abc-warnings                  -> [(text) ...] what the last parse
 %                                       skipped or could not read, as in
-%                                       parseABC's warnings ("tune 1: ...")
+%                                       ("tune 1: ...")
 %   any sm-abc-json                  -  print a value as canonical JSON
 %                                       (dict keys sorted) on stdout
 %   (abc text) tune sm-abc-annotations -> [<< /page /type /x /y /w /h /rgb
@@ -23,14 +23,13 @@
 %                                       options /annotations take them
 %   (abc text) tune sm-abc-tune-transpose -> semitones  the tune's (0-based)
 %                                       %%transpose N line, else the file
-%                                       header's (before the first X:), else 0,
-%                                       as src/index.js tuneTranspose; it is
-%                                       not part of the Score, which stays
-%                                       equal to the JS parse. lib/sm_transpose.ps
+%                                       header's (before the first X:), else 0;
+%                                       it is not part of the Score.
+%                                       lib/sm_transpose.ps
 %                                       applies it (sm-score-transpose)
 %
 % Score values: strings are PS strings (UTF-8 bytes), Fracs are [num den]
-% integer arrays reduced by gcd, JS null is null, booleans are booleans.
+% integer arrays reduced by gcd, absent values are null, booleans are booleans.
 %
 % Example (headless, from the repository root):
 %   pscat -e '(lib/sm_abc_parse.ps) run
@@ -39,7 +38,7 @@
 % A file that engraves needs both halves: run this file, then the layout
 % (lib/sm_abc.ps), and pass the Score from sm-abc-parse to it.
 %
-% Coverage: everything src/abc.js parses -- header fields, keys with modes
+% Coverage: header fields, keys with modes
 % and clefs, meters, unit lengths, tempo, notes, rests (z x Z X), chords,
 % broken rhythm, tuplets, ties, slurs, grace notes, decorations, dynamics,
 % hairpins, chord symbols, annotations, bar lines, repeats, endings, inline
@@ -1122,9 +1121,9 @@ sm-abcp-dict begin
 } bind def
 
 % ================================================================ reader's annotations
-% %%annotation lines (src/index.js parseAnnotations), in the form the layout
-% takes as options /annotations: << /page /type /x /y /w /h /rgb /text >>.
-% Numbers are rounded as psLiteral writes them (num(): two decimals).
+% %%annotation lines, in the form the layout takes as options /annotations:
+% << /page /type /x /y /w /h /rgb /text >>. Numbers are rounded to two
+% decimals (as src/ps.js num() writes them).
 /sm-abcp-colors << /red (#c0392b) /blue (#1f5fbf) /green (#2e7d32) /orange (#d35400)
   /purple (#7b3fa0) /yellow (#e0b000) /black (#222222) >> def
 % x sm-abcp-num2 x'  : an integer stays one, else two decimals
@@ -1218,13 +1217,11 @@ sm-abcp-dict begin
 } bind def
 
 % ================================================================ %%transpose
-% The directive is not part of the Score (it stays deep-equal to the JS
-% parse); src/index.js reads it from the text, as these do.
+% The directive is not part of the Score: these read it from the text.
 % s i sm-abcp-blanks j : end of the run of spaces and tabs starting at i
 /sm-abcp-blanks { { 2 copy sm-abcp-ch dup 32 eq exch 9 eq or { 1 add } { exit } ifelse } loop exch pop } bind def
 % [lines] sm-abcp-srctr n : the first line matching
 %   ^[ \t]*(<!--[ \t]*)?%%transpose[ \t]+([+-]?\d+)  -> that number, else 0
-%   (src/transpose.js sourceTranspose)
 /sm-abcp-srctr {
   0 exch { /sm-abcp-xl exch def
     /sm-abcp-xp sm-abcp-xl 0 sm-abcp-blanks def
@@ -1241,7 +1238,7 @@ sm-abcp-dict begin
   } forall
 } bind def
 % text tune sm-abcp-tunetr n : %%transpose of that tune (0-based), else of
-%   the file header before the first X: line (src/index.js tuneTranspose)
+%   the file header before the first X: line
 /sm-abcp-tunetr {
   /sm-abcp-xtn exch def sm-abcp-tunelines
   dup length sm-abcp-xtn gt sm-abcp-xtn 0 ge and { sm-abcp-xtn get } { pop [] } ifelse sm-abcp-srctr
@@ -1302,8 +1299,8 @@ sm-abcp-dict begin
 % What a caller needs to know about a text without engraving it, for
 % sm-score-meta: the chosen tune's title, composer, transposition and
 % %%annotation marks, the list of tunes and the parse warnings. The JS side
-% (bin/sheet.mjs, the editor) reads it instead of parsing; src/index.js
-% scoreMeta is the reference it is tested against (tests/ps-meta.test.mjs).
+% (bin/sheet.mjs, the editor) reads it instead of parsing; it is tested
+% against the retired JS parser's results (tests/ps-meta.test.mjs).
 % /name (file.ps) sm-abcp-need - : run lib/file.ps (from sm-lib-dir when
 %   defined, else (lib/)) unless name is defined; quietly nothing when absent
 /sm-abcp-need {
@@ -1311,8 +1308,8 @@ sm-abcp-dict begin
     /sm-lib-dir where { pop sm-lib-dir } { (lib/) } ifelse exch sm-abcp-cat run
   } stopped cleartomark pop } ifelse
 } bind def
-% text sm-abcp-isxml bool : MusicXML rather than ABC (src/index.js
-%   detectFormat: the first 2000 bytes, leading white space and a BOM
+% text sm-abcp-isxml bool : MusicXML rather than ABC (as src/index.js
+%   detectFormat decides: the first 2000 bytes, leading white space and a BOM
 %   skipped, start with <?xml or hold <score-partwise or <score-timewise)
 /sm-abcp-isxml {
   dup length 2000 min 0 exch getinterval
@@ -1324,7 +1321,7 @@ sm-abcp-dict begin
 } bind def
 % [lines] sm-abcp-infann [<< /line /color /page /type /x /y /w /h /rgb /text >> ...]
 %   the %%annotation marks with their line (0-based, in these lines) and
-%   colour as written (src/index.js parseAnnotations)
+%   colour as written
 /sm-abcp-infann {
   /sm-abcp-infl exch def
   [ 0 1 sm-abcp-infl length 1 sub { /sm-abcp-infi exch def

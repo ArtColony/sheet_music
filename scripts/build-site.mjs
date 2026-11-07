@@ -160,7 +160,7 @@ const index = shell('Sheet music with pscat', 'Deterministic sheet music engravi
       <h2>How it works</h2>
       <ol class="flow">
         <li><b>One program.</b> The score file is the library (<code>lib/sm_engrave.ps</code> glyphs, <code>lib/sm_abc.ps</code> layout, <code>lib/sm_abc_parse.ps</code>, <code>lib/sm_musicxml.ps</code>, <code>lib/sm_transpose.ps</code>), a short driver, and the ABC or MusicXML source itself after <code>currentfile</code>.</li>
-        <li><b>Parse.</b> PostScript reads the ABC into one score model with exact rational durations. (MusicXML is still read by <code>src/musicxml.js</code> and embedded as a PostScript literal.)</li>
+        <li><b>Parse.</b> PostScript reads the ABC (<code>lib/sm_abc_parse.ps</code>) or MusicXML (<code>lib/sm_musicxml.ps</code>) into one score model with exact rational durations.</li>
         <li><b>Lay out and draw.</b> <code>lib/sm_abc.ps</code> spaces columns by duration, justifies lines, breaks pages, beams, stacks chords and accidentals, and places lyrics, chord symbols, ties and slurs, every position rounded to two decimals.</li>
         <li><b>Render.</b> <code>pscat --pdf</code> on the command line, or <code>createRenderer().render(ps, {pdf: true})</code> in the browser. Same interpreter, same bytes. Playback reads the notes from PostScript too (<code>sm-abc-performance</code>).</li>
       </ol>

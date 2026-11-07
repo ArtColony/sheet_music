@@ -117,9 +117,10 @@ Record provenance in `S:` / `Z:`; samples added to this repo also go in
   another key, respelled with the fewest accidentals, chord symbols included.
   Written pitch for transposing instruments: B♭ clarinet/trumpet `+2`, E♭ alto
   sax `+9`, F horn `+7`; an octave for bass instruments `-12`.
-- Check pitches by ear or by numbers: `performanceOf(text, { transpose })`
-  from `src/index.js` lists every sounded note (MIDI numbers, exact times,
-  repeats played out); `midiFile(perf)` writes a `.mid`.
+- Check pitches by ear or by numbers: `pscat --pdf /dev/null -e '(lib/sheet.ps) run
+  (tune.abc) << /transpose 2 >> sm-abc-performance-file'` prints every sounded
+  note as JSON (MIDI numbers, exact times, repeats played out);
+  `node bin/sheet.mjs tune.abc -o tune.mid` writes a `.mid` from them.
 - PDFs written here carry their source: `node bin/sheet.mjs score.pdf -o
   score.abc` gets it back. Edit that, not a retyped copy.
 

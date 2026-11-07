@@ -2,9 +2,9 @@
 % sm_abc.ps -- lay out and engrave a Score dictionary in PostScript.
 %
 % Part of ArtColony/sheet_music (MIT). Needs lib/sm_engrave.ps (the glyphs).
-% The Score is the structure src/ps.js psLiteral() writes for the JS
-% parser's Score (keys sorted, Fracs as [num den]); lib/sm_abc_parse.ps, when
-% present, builds the same structure from ABC text inside PostScript.
+% The Score is the dict lib/sm_abc_parse.ps (ABC) and lib/sm_musicxml.ps
+% (MusicXML) build from the text (Fracs as [num den]; the model is in
+% docs/postscript-api.md, "The Score").
 %
 % API
 %   score sm-abc-engrave -                 default options
@@ -37,8 +37,8 @@
 % One-liner (from the repository root; the parser is loaded on demand):
 %   (lib/sm_engrave.ps) run (lib/sm_abc.ps) run (song.abc) sm-abc-engrave-file
 % rendered with `pscat --pdf song.pdf --page 612x792 that.ps` (595x842 for /a4).
-% A score built by hand: << ... >> sm-abc-engrave, in the psLiteral structure
-% (see src/score.js for the fields).
+% A score built by hand: << ... >> sm-abc-engrave, in the same structure
+% (docs/postscript-api.md lists the fields).
 %
 % Units: sp = staff space (points); a vertical "pos" is
 % staff steps from the centre line, y = centre + pos * sp / 2.

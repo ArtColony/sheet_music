@@ -1,6 +1,7 @@
 # Supported notation
 
-The engraver reads two formats into one score model (`src/score.js`). This
+The engraver reads two formats into one score model ([The Score](postscript-api.md#the-score)),
+both parsed in PostScript (`lib/sm_abc_parse.ps`, `lib/sm_musicxml.ps`). This
 page lists what is drawn. Anything else is skipped, usually with a warning
 (the CLI prints them; the editor shows them under the source).
 

@@ -196,10 +196,42 @@ eighth too long.)
 `K:2#` is the key signature (two sharps; `3b` three flats). The meter shown is
 the first one.
 
+## The Score
+
+The parsers (ABC: `lib/sm_abc_parse.ps`, MusicXML: `lib/sm_musicxml.ps`)
+build one dictionary per tune, and the layout (`sm-abc-engrave`), the
+transposition and the playback take it. Strings are UTF-8 bytes, fractions
+`[num den]` reduced, an absent value `null` or a missing key. `sm-abc-json`
+prints it with the keys sorted. The model (it was the JavaScript parsers'
+`src/score.js`, retired in #10):
+
+```
+score = <<
+  /meta    << /title /subtitles [] /composer /origin /area /book /history /rhythm /transcriber /notes [] /source /words [] /rights >>
+  /tempo   << /text /beat [n d] or null /bpm >> or null
+  /staves  [ << /id /name /clef << /sign (G)|(F)|(C) /line /octave >> >> ... ]
+  /group   (brace) | (bracket) | null
+  /initial << /key << /fifths >> /time << /num /den /symbol /text >> >>
+  /measures [ <<
+    /staves [ << /events [event ...] >> ... ]      one entry per staff
+    /key /time /clefs [clef or null ...]           changes that take effect here (optional)
+    /startRepeat bool  /endBar (single)|(double)|(final)|(thick-thin)|(repeat-end)
+    /ending << /label /closed /span >>             a volta bracket starting here (optional)
+    /lineBreak bool  /number  /mmCount  /part /pickup
+  >> ... ]
+>>
+event = << /kind (note)|(rest) /dur [n d] (sounding) /type [n d] (written) /dots
+  /notes [ << /step /oct /acc /alter /tie >> ... ] /beam bool
+  optional: /tuplet << /p /q /id /first /last /closed >>  /grace << /notes /slash >>
+            /decos []  /dyn  /hairpinStart /hairpinEnd  /chord  /annot
+            /lyrics [<< /text /hyphen /extend >> ...]  /slurStart /slurEnd  /tiedFrom
+            /rest << /measure /count /invisible >>  /len /tup /spacer >>
+```
+
 ## Parsing ABC
 
 From [`lib/sm_abc_parse.ps`](../lib/sm_abc_parse.ps). A Score is the
-dictionary `src/score.js` describes (`/meta /initial /staves /measures
+dictionary described [above](#the-score) (`/meta /initial /staves /measures
 /tempo /group`); strings are UTF-8 bytes, fractions `[num den]`.
 
 | Procedure | Stack |
@@ -225,10 +257,11 @@ engraving it, as one line of JSON (keys sorted, then a newline): the title
 and composer for the PDF, the key after transposition, the list of tunes,
 the reader's marks and the parse warnings. `sheet` (`bin/sheet.mjs`) and the
 editor run it first (`src/psdoc.js` `metaPS` writes the document, `readMeta`
-reads the line) and write the engraving document from it, so neither parses
-the source in JavaScript. `tests/ps-meta.test.mjs` checks it against the JS
-parser (`src/index.js` `scoreMeta`) for every sample and fixture, every tune,
-transposed 0, +2 and −5.
+reads the line) and write the engraving document from it: there is no
+parser in JavaScript. `tests/ps-meta.test.mjs` checks it against what the
+retired JS parser gave (`scoreMeta`, frozen in
+`tests/fixtures/reference/meta.json`) for every sample and fixture, every
+tune, transposed 0, +2 and −5.
 
 | Procedure | Stack |
 |---|---|
@@ -238,7 +271,9 @@ transposed 0, +2 and −5.
 
 Options: `/tune` (0-based), `/transpose` (semitones; the tune's
 `%%transpose` adds to it) and `/format` (`(abc)` or `(musicxml)`; without it
-the text is sniffed as `src/index.js` `detectFormat` does). MusicXML needs
+the text is sniffed: MusicXML when, after white space, it starts with
+`<?xml` or holds `<score-partwise` or `<score-timewise` in its first 2000
+bytes). MusicXML needs
 `lib/sm_musicxml.ps` and a transposition `lib/sm_transpose.ps`; both are run
 from `sm-lib-dir` (else `lib/`) when they are not loaded.
 
@@ -273,8 +308,9 @@ does not (unless `/quiet true`).
 From [`lib/sm_musicxml.ps`](../lib/sm_musicxml.ps) (#5), which `sheet.ps`
 loads. It reads an uncompressed `score-partwise` document (`.musicxml` or
 `.xml`; unzip a `.mxl` first) into the same Score the ABC parser builds, so
-the same layout engraves it. It is a port of `src/musicxml.js` and gives the
-same Score for every input (`tests/ps-musicxml.test.mjs`). It reads: parts and
+the same layout engraves it. It began as a port of the JavaScript parser
+(`src/musicxml.js`, retired in #10) and still gives that parser's Score for
+every sample and fixture (`tests/ps-musicxml.test.mjs`). It reads: parts and
 multi-staff parts (one voice per staff, the first found), keys, meters
 (common/cut, `3+2`, `senza-misura`), clefs, notes, rests, chords, dots, ties,
 slurs, tuplets, beams (or automatic beaming when a part has none),
@@ -354,9 +390,9 @@ From [`lib/sm_perform.ps`](../lib/sm_perform.ps) (#8), which `sheet.ps`
 loads. `sm-abc-performance` prints what a tune sounds like as one line of
 JSON on stdout, so a program that cannot run PostScript itself (the editor's
 Web Audio player, `src/play.js midiFile`, any MIDI writer) only turns events
-into sound. It is a port of `src/play.js`'s `performance()`, and
-`tests/ps-perform.test.mjs` checks that both give exactly the same events for
-every sample, transposed or not.
+into sound. It began as a port of `src/play.js`'s `performance()` (retired
+in #10), and `tests/ps-perform.test.mjs` checks that it still gives exactly
+that function's events for every sample, transposed or not.
 
 - **Repeats** `|: :|` and **1st/2nd endings** (`[1`, `[2`, `[1,3`, `[1-3`)
   are played out; **ties** join notes, also over bar lines.
@@ -376,8 +412,8 @@ every sample, transposed or not.
 
 Options are `/tune` (0-based, ABC text) and `/transpose` (semitones; for ABC
 text the tune's `%%transpose` adds to it), as for the engrave procedures. A
-Score dict given directly (e.g. from MusicXML, written by `psLiteral`) is
-transposed in place.
+Score dict given directly (e.g. from `sm-musicxml-parse`) is transposed in
+place.
 
 ```
 $ pscat --pdf /dev/null -e '(lib/sheet.ps) run (samples/twinkle.abc) sm-abc-performance-file'
@@ -725,17 +761,17 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (ABC parser), `sm-mxp-`
 | `sm-abc-print-warnings` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1638) |  |
 | `sm-abc-engrave-string` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1645) |  |
 | `sm-abc-engrave-file` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1682) |  |
-| `sm-abc-warnings` | value | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1407) |  |
-| `sm-abc-parse-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1408) |  |
-| `sm-abc-parse` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1409) |  |
-| `sm-abc-parse-file-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1410) |  |
-| `sm-abc-parse-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1411) |  |
-| `sm-abc-json` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1412) |  |
-| `sm-abc-annotations` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1413) |  |
-| `sm-abc-tune-transpose` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1414) |  |
-| `sm-score-meta-dict` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1416) | (text) [options] sm-score-meta-dict dict : what sm-score-meta prints, as a dictionary |
-| `sm-score-meta` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1418) | (text) [options] sm-score-meta - : print the score's metadata as one JSON line |
-| `sm-score-meta-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1420) | (path) [options] sm-score-meta-file - : the same for a file |
+| `sm-abc-warnings` | value | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1404) |  |
+| `sm-abc-parse-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1405) |  |
+| `sm-abc-parse` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1406) |  |
+| `sm-abc-parse-file-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1407) |  |
+| `sm-abc-parse-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1408) |  |
+| `sm-abc-json` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1409) |  |
+| `sm-abc-annotations` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1410) |  |
+| `sm-abc-tune-transpose` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1411) |  |
+| `sm-score-meta-dict` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1413) | (text) [options] sm-score-meta-dict dict : what sm-score-meta prints, as a dictionary |
+| `sm-score-meta` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1415) | (text) [options] sm-score-meta - : print the score's metadata as one JSON line |
+| `sm-score-meta-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1417) | (path) [options] sm-score-meta-file - : the same for a file |
 | `sm-sp` | value | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L18) |  |
 | `sm-ink` | value | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L19) |  |
 | `sm-mtx` | value | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L22) |  |
@@ -824,12 +860,12 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (ABC parser), `sm-mxp-`
 | `sm-annot-text` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L634) | x y t r g b sm-annot-text   -- an italic note, baseline at y |
 | `sm-annot-circle` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L638) | x y w h r g b sm-annot-circle   -- an ellipse drawn inside the box |
 | `sm-annot-highlight` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L648) | x y w h r g b sm-annot-highlight   -- a pale box, drawn under the music |
-| `sm-musicxml-warnings` | value | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L958) |  |
-| `sm-musicxml-error` | value | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L959) |  |
-| `sm-musicxml-parse` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L961) | (xml text) sm-musicxml-parse score |
-| `sm-musicxml-parse-file` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L978) | (path.musicxml) sm-musicxml-parse-file score |
-| `sm-musicxml-engrave-string` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L980) | (xml text) [options] sm-musicxml-engrave-string - |
-| `sm-musicxml-engrave-file` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L996) | (path.musicxml) [options] sm-musicxml-engrave-file - |
+| `sm-musicxml-warnings` | value | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L957) |  |
+| `sm-musicxml-error` | value | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L958) |  |
+| `sm-musicxml-parse` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L960) | (xml text) sm-musicxml-parse score |
+| `sm-musicxml-parse-file` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L977) | (path.musicxml) sm-musicxml-parse-file score |
+| `sm-musicxml-engrave-string` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L979) | (xml text) [options] sm-musicxml-engrave-string - |
+| `sm-musicxml-engrave-file` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L995) | (path.musicxml) [options] sm-musicxml-engrave-file - |
 | `sm-score-performance` | proc | [lib/sm_perform.ps](../lib/sm_perform.ps#L332) |  |
 | `sm-abc-performance` | proc | [lib/sm_perform.ps](../lib/sm_perform.ps#L333) |  |
 | `sm-abc-performance-file` | proc | [lib/sm_perform.ps](../lib/sm_perform.ps#L338) |  |

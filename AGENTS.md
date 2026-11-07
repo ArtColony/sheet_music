@@ -58,15 +58,20 @@ adding the marketplaces. Start a new session after installing.
   `pscat file.ps` opens a window.
 - **Determinism is the contract:** exact rational time, fixed-precision
   numbers, and no clock, random numbers or locale.
-- **PostScript direction:** the library is the primary engraver. Prefer
-  putting notation logic in `lib/*.ps`. JavaScript keeps audio playback and
-  the web UI. Every PostScript name starts with `sm-`.
-- **Look at what you change:** after touching `lib/sm_abc.ps` or
-  `lib/sm_engrave.ps`, run `node scripts/render-samples.mjs` and inspect a
+- **PostScript direction:** the library is the engraver. Notation logic
+  lives in `lib/*.ps`: parsing (`lib/sm_abc_parse.ps`, `lib/sm_musicxml.ps`),
+  transposition, layout, drawing and the playback events. JavaScript keeps
+  audio/MIDI output and the web UI; there is no JS parser (`src/abc.js` and
+  `src/musicxml.js` were retired in #10). Every PostScript name starts with `sm-`.
+- **Look at what you change:** after touching `lib/sm_abc.ps`,
+  `lib/sm_engrave.ps` or the parsers, run `node scripts/render-samples.mjs` and inspect a
   high-dpi crop. The PostScript library is the only engraver (the
   JavaScript layout, `--engine js`, was retired in #10). Then
   run `npm test` and update goldens on purpose with
-  `node scripts/update-golden.mjs`.
+  `node scripts/update-golden.mjs`. The parser, metadata, playback and
+  transposition tests compare against the retired JS code's frozen results
+  (`tests/fixtures/reference/`); they cannot be regenerated, so a parser
+  change that is meant to differ updates the expectation in the test.
 - **pscat problems:** log them in `docs/FRICTION.md` and file upstream as
   CLAUDE.md describes.
 

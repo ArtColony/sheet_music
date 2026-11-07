@@ -1,6 +1,6 @@
 ---
 name: engraver-dev
-description: Change or extend this repo's music engraver: the ABC/MusicXML parsers, the PostScript layout lib/sm_abc.ps, or the PostScript glyph library lib/sm_engrave.ps. Use when adding notation features, fixing how something is drawn (spacing, beams, stems, ties, lyrics, glyph shapes), adding a sample, or chasing a determinism or pscat problem.
+description: Change or extend this repo's music engraver: the ABC/MusicXML parsers (lib/sm_abc_parse.ps, lib/sm_musicxml.ps), the PostScript layout lib/sm_abc.ps, or the PostScript glyph library lib/sm_engrave.ps. Use when adding notation features, fixing how something is drawn (spacing, beams, stems, ties, lyrics, glyph shapes), adding a sample, or chasing a determinism or pscat problem.
 ---
 
 # Working on the engraver
@@ -10,14 +10,13 @@ description: Change or extend this repo's music engraver: the ABC/MusicXML parse
 | File | Role |
 |---|---|
 | `lib/sm_abc.ps` | everything visual: columns and spacing, justification, line/page breaks, stems, beams, chords, accidentals, decorations, lyrics, ties, slurs, annotations (names `sm-ae-`) |
-| `lib/sm_abc_parse.ps`, `lib/sm_musicxml.ps` | ABC and MusicXML → the Score, in PostScript |
+| `lib/sm_abc_parse.ps`, `lib/sm_musicxml.ps` | the parsers: ABC and MusicXML → the Score (model: `docs/postscript-api.md`, "The Score"), also `sm-score-meta` (title, tunes, annotations, warnings as JSON) |
 | `lib/sm_transpose.ps`, `lib/sm_perform.ps` | transposition; the notes as played (JSON events) |
-| `src/abc.js`, `src/musicxml.js` | the JS parsers: the reference the PS parsers are tested against (retired after #9/#10) |
-| `src/score.js` | the shared Score model, keys/clefs, `finalizeScore` (note values, tied splits, tuplets, endings, numbering) |
-| `src/frac.js` | exact rational time; never use floats for onsets or durations |
-| `src/ps.js` | `num()` fixed-precision numbers, `text()` PostScript text literals, `psLiteral()` (a Score as PostScript) |
-| `src/psdoc.js` | `selfContainedPS()`: DSC header, the libs, a driver and the source (what `sheet` writes) |
-| `src/index.js` | parse, transposition, playback/MIDI, PDF source attachment, annotations |
+| `tests/fixtures/reference/` | what the retired JS parsers, `scoreMeta`, `performance()` and `transposeScore` gave (#10): the PostScript is tested against it |
+| `src/frac.js` | exact rational time (MIDI ticks from PostScript's `[num den]` times) |
+| `src/ps.js` | `num()` fixed-precision numbers, `text()` PostScript text literals, `psLiteral()` (any value as PostScript: the options dict) |
+| `src/psdoc.js` | `selfContainedPS()`: DSC header, the libs, a driver and the source (what `sheet` writes); `metaPS()`/`readMeta()` for `sm-score-meta` |
+| `src/play.js`, `src/index.js` | MIDI from PostScript's events, PDF source attachment, annotation lines; no parser |
 | `lib/sm_engrave.ps` | glyph and primitive procedures, all `sm-` prefixed |
 | `bin/sheet.mjs` | CLI; `site/editor.html` + `scripts/build-site.mjs`: browser editor and Pages site |
 
@@ -60,18 +59,22 @@ render with `--lint`, iterate, then wire it into `lib/sm_abc.ps`.
 `sm-nib` (stroke under a squashed, rotated matrix) gives broad-pen
 thick/thin curves; that is how the clefs, quarter rest and common-time C are drawn.
 
-The PostScript layout (`lib/sm_abc.ps`, ABC parsed by `lib/sm_abc_parse.ps`)
-is the only engraver: `src/layout.js` was retired in #10, so a layout change
-lands once, in PostScript. `tests/ps-engine.test.mjs` pins every sample's and
+The PostScript library is the only engraver: `src/layout.js` and the JS
+parsers (`src/abc.js`, `src/musicxml.js`) were retired in #10, so a parser
+or layout change lands once, in PostScript. `tests/ps-engine.test.mjs` pins every sample's and
 fixture's document and PDF by hash (`tests/golden.json`), so any change to
 the pages shows up there; look at the renders, then update the goldens.
 
 For a new notation feature: parse it into the Score model (both formats if
-it exists in both: `lib/sm_abc_parse.ps` / `lib/sm_musicxml.ps`, and the JS
-reference parsers while they remain), handle it in `lib/sm_abc.ps` (space in the column pass, height in the
+it exists in both: `lib/sm_abc_parse.ps` / `lib/sm_musicxml.ps`; document a
+new field in `docs/postscript-api.md`), handle it in `lib/sm_abc.ps` (space in the column pass, height in the
 vertical-extent pass, drawing in `sm-ae-drawevent`/`sm-ae-drawdecos`, or
 the cross-event pass for spanners), add it to `samples/feature-tour.abc`,
-add a parser test, update `docs/notation.md` and the goldens.
+add a parser test (`tests/abc.test.mjs` asserts fields of PostScript's Score),
+update `docs/notation.md` and the goldens. A sample's Score then differs from
+the frozen JS reference in `tests/fixtures/reference/`: the references cannot
+be regenerated (the JS is gone), so change the comparison to expect the new
+field (or test the new sample on its own) and say so in the commit.
 
 ## pscat
 

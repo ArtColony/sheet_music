@@ -72,10 +72,11 @@ export function text(s, size = 11) {
  * Any JSON-like value as a PostScript literal: objects -> << /key value >>
  * (keys sorted), arrays -> [ ], strings -> (escaped, non-ASCII as \ooo of
  * its UTF-8 bytes), integers as integers, other numbers via num(), null ->
- * null, booleans -> true/false; undefined members are left out. This is
- * the contract between the JS parser and the PostScript engraver
- * (lib/sm_abc.ps): a parsed Score written this way is what the PS layout
- * consumes, and what the PS ABC parser must build. Fracs stay [num den].
+ * null, booleans -> true/false; undefined members are left out. It writes
+ * the options dict of the documents src/psdoc.js makes, and (in the tests)
+ * the frozen Scores of the retired JS parsers, which the PostScript layout
+ * takes as they are: the same structure lib/sm_abc_parse.ps builds, Fracs
+ * as [num den].
  */
 export function psLiteral(v) {
   if (v === null) return 'null';
