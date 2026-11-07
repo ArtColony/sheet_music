@@ -58,8 +58,14 @@ render with `--lint`, iterate, then wire it into `layout.js`.
 `sm-nib` (stroke under a squashed, rotated matrix) gives broad-pen
 thick/thin curves; that is how the clefs, quarter rest and common-time C are drawn.
 
+The PostScript layout (`lib/sm_abc.ps`, ABC parsed by `lib/sm_abc_parse.ps`)
+is the default engraver; `src/layout.js` is the `--engine js` fallback and
+`tests/ps-engine.test.mjs` requires both to draw identical pixels for every
+sample, so a layout change lands in both, with floating-point operations in
+the same order, until `layout.js` is retired (#8).
+
 For a new notation feature: parse it into the Score model (both formats if
-it exists in both), handle it in `layout.js` (space in `noteShape`/columns,
+it exists in both), handle it in `lib/sm_abc.ps` and `layout.js` (space in `noteShape`/columns,
 height in the vertical-extent pass, drawing in `drawEvent`/`drawDecos` or
 the cross-event pass for spanners), add it to `samples/feature-tour.abc`,
 add a parser test, update `docs/notation.md` and the goldens.
