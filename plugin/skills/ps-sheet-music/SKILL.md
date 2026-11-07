@@ -1,6 +1,6 @@
 ---
 name: ps-sheet-music
-description: Write music as ABC notation and engrave it to PDF/PNG with only pscat (the CLI or the pscat MCP tools), using the sheet_music PostScript library. Use when asked to notate, transcribe, arrange, typeset or render sheet music, lead sheets, hymns, folk tunes, exercises or worksheets, to check or fix a score, or to draw custom notation (staves, clefs, notes) in PostScript. Everything runs in pscat: no checkout, build or other tools.
+description: Write music as ABC notation (or take a MusicXML file) and engrave it to PDF/PNG with only pscat (the CLI or the pscat MCP tools), using the sheet_music PostScript library. Use when asked to notate, transcribe, arrange, typeset or render sheet music, lead sheets, hymns, folk tunes, exercises or worksheets, to check or fix a score, or to draw custom notation (staves, clefs, notes) in PostScript. Everything runs in pscat: no checkout, build or other tools.
 ---
 
 # Sheet music with pscat alone
@@ -11,7 +11,7 @@ pscat → PDF/PNG. Nothing else runs: no build step, no network, no music font.
 ## Find the library
 
 `sheet.ps` and its siblings (`sm_engrave.ps`, `sm_abc_parse.ps`, `sm_abc.ps`,
-and `sm_transpose.ps` when present) live in one directory. Call it `LIB`.
+and `sm_transpose.ps` and `sm_musicxml.ps` when present) live in one directory. Call it `LIB`.
 Look for it in this order:
 
 1. **Claude Code plugin:** `${CLAUDE_PLUGIN_ROOT}/lib/sheet.ps`.
@@ -138,6 +138,7 @@ for checks.
 | check | `(tune.abc) sm-abc-check-file 0 0 1 1 rectfill showpage` |
 | ABC in a string | `(X:1\nT:Scale\nK:C\nCDEF GABc|]) sm-abc-engrave-string`: short tests only, since `(` and `\` must be escaped in a string |
 | transpose | `<< /transpose 2 >>` (semitones), or a `%%transpose 2` line in the tune |
+| MusicXML | `(song.musicxml) sm-musicxml-engrave-file`, `sm-musicxml-check-file`, `sm-musicxml-engrave-here` (same options) |
 
 Options: `/paper` (`/letter`, `/a4`, `[w h]` points), `/staff-space`
 (points, default 5.5), `/breaks` (`(source)` keeps your lines, `(auto)` fills
@@ -206,8 +207,10 @@ library.
 
 ## Limits
 
-- **ABC only.** MusicXML input is not in the PostScript library yet
-  (sheet_music#5).
+- **MusicXML input** (`score-partwise`, uncompressed: unzip a `.mxl`) is read
+  by `sm_musicxml.ps` into the same layout; it engraves one voice per staff
+  (others are dropped with a warning). Write new music as ABC: it is shorter
+  and the check helpers know its bar lines.
 - One voice per staff (`&` is skipped with a warning); no macros (`m:`, `U:`);
   courtesy signatures and mid-line lyric wrapping are not drawn.
 - PDFs have the text as outlines (not searchable); fonts are the 35 standard
