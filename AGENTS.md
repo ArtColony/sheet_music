@@ -61,7 +61,10 @@ adding the marketplaces. Start a new session after installing.
 - **PostScript direction:** the library is the primary engraver. Prefer
   putting notation logic in `lib/*.ps`. JavaScript keeps audio playback and
   the web UI. Every PostScript name starts with `sm-`.
-- **Look at what you change:** render it and inspect a high-dpi crop. Then
+- **Look at what you change:** after touching `lib/sm_abc.ps` or
+  `lib/sm_engrave.ps`, run `node scripts/render-samples.mjs` and inspect a
+  high-dpi crop. The PostScript library is the only engraver (the
+  JavaScript layout, `--engine js`, was retired in #10). Then
   run `npm test` and update goldens on purpose with
   `node scripts/update-golden.mjs`.
 - **pscat problems:** log them in `docs/FRICTION.md` and file upstream as

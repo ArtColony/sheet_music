@@ -19,9 +19,10 @@ one .ps file: lib/*.ps + driver + the ABC text ──pscat──▶ parse ▶ la
 
 The engraver is the PostScript library in [`lib/`](lib/): pscat parses the
 ABC or MusicXML, lays out and draws the score. JavaScript builds the document, plays the
-notes and runs the web page. The original JavaScript layout
-([`src/layout.js`](src/layout.js), `--engine js`) stays as a fallback and as
-the reference the tests compare against, pixel for pixel, on every sample.
+notes and runs the web page. The original JavaScript layout (`src/layout.js`,
+`--engine js`) was retired once the PostScript one matched it pixel for pixel
+on every sample (#10); the tests now hold golden hashes of the PostScript
+engraver's documents and PDFs.
 
 - **Deterministic.** Durations are exact rationals; every coordinate is written
   with fixed precision, with no locale or clock involved. The same input gives
@@ -94,7 +95,6 @@ node bin/sheet.mjs my-tune.abc -o my-tune.png --dpi 150 # page PNGs
 node bin/sheet.mjs my-tune.abc -o my-tune.ps            # the self-contained PostScript
 node bin/sheet.mjs my-tune.abc -o my-tune.mid           # MIDI, from the notes PostScript plays
 node bin/sheet.mjs song.musicxml --engine ps-wasm -o song.pdf  # same PDF, via WebAssembly
-node bin/sheet.mjs my-tune.abc --engine js -o old.pdf   # the JavaScript layout (fallback)
 ```
 
 Options: `--tune N` (files with several `X:` tunes; `--list` shows them),
@@ -154,14 +154,14 @@ of `lib/sm_abc.ps`. Transposition runs in PostScript too
 `--transpose N` and `%%transpose` work, and from PostScript
 `(song.abc) << /transpose 2 >> sm-abc-engrave-file` adds to the file's `%%transpose`.
 
-It covers everything the JS layout draws: title block, tempo, clefs, key and
+It covers everything the retired JS layout drew: title block, tempo, clefs, key and
 time signatures (also mid-line changes), spacing, line and page breaks, stems,
 beams, chords, accidentals, ledger lines, dots, rests, multi-measure rests,
 bars, repeats, voltas, chord symbols, text annotations, decorations, dynamics,
 hairpins, slurs, ties, tuplets, grace notes, lyrics, several staves, the footer
-and `%%annotation` marks; every sample's page is pixel-identical to the JS
-engraver's (`tests/ps-engine.test.mjs` checks it at 150 dpi; it was checked at
-600 dpi too). Playback reads the notes from PostScript as well:
+and `%%annotation` marks; every sample's page was pixel-identical to the JS
+engraver's (checked at 150 and 600 dpi) when that was retired, and
+`tests/ps-engine.test.mjs` pins the PDFs by hash since. Playback reads the notes from PostScript as well:
 [`lib/sm_perform.ps`](lib/sm_perform.ps) `sm-abc-performance` prints them as
 JSON events (repeats, endings, ties, exact times), and the editor and
 `-o song.mid` only turn them into sound or a MIDI file

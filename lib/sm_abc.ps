@@ -30,7 +30,7 @@
 %     transposed first (lib/sm_transpose.ps sm-score-transpose, run on demand
 %     like the parser; sm-abc-engrave modifies the score dict it is given).
 %     For ABC text the tune's %%transpose line, else the file header's, adds
-%     to it, as in the JS toPostScript.
+%     to it (sm-abc-tune-transpose reads it).
 %   file (marker) sm-abc-readsrc string    read lines of file up to a line equal to marker
 %   x sm-r2 x'                             round to 2 decimals (all drawn positions go through it)
 %
@@ -40,14 +40,14 @@
 % A score built by hand: << ... >> sm-abc-engrave, in the psLiteral structure
 % (see src/score.js for the fields).
 %
-% Units as in src/layout.js: sp = staff space (points); a vertical "pos" is
+% Units: sp = staff space (points); a vertical "pos" is
 % staff steps from the centre line, y = centre + pos * sp / 2.
 % Every name starts with sm-; the layout's own names live in sm-ae-dict and
 % start with sm-ae-. Per-event layout results are stored in the event dicts
 % under sm- keys (the Score dicts are never begun: their keys include /type).
 %
-% Covers everything src/layout.js draws (the JS engraver is the reference;
-% every sample is identical to it at 300 dpi, or within anti-aliasing): title block, tempo, clef/key/time
+% Covers what the retired JS layout (src/layout.js, of which this is a port)
+% drew; tests/golden.json pins the output: title block, tempo, clef/key/time
 % (also mid-line changes), proportional spacing with lyric/chord/dynamic
 % collision checks, source or automatic line breaks and justification, page
 % breaks, stems, flags, beams (the Score's grouping), chords and seconds,
@@ -540,7 +540,7 @@ sm-ae-dict begin
 /sm-ae-mwidth {
   /sm-ae-mw-first exch def /sm-ae-mw-f exch def /sm-ae-mw-m exch def
   sm-ae-mw-m /sm-pre get sm-ae-mw-m /sm-cols get 0 get /left get add
-  0 sm-ae-mw-m /sm-cols get { dup /min get exch /ideal get sm-ae-mw-f mul sm-ae-max add } forall add   % summed as layout.js does
+  0 sm-ae-mw-m /sm-cols get { dup /min get exch /ideal get sm-ae-mw-f mul sm-ae-max add } forall add   % summed as the JS layout did
   sm-ae-mw-m /sm-barw get add
   sm-ae-mw-first { sm-ae-mw-m /sm-pc get sub } if
 } bind def
@@ -807,7 +807,7 @@ sm-ae-dict begin
     sm-ae-systop sm-ae-pg-si sm-ae-pg-y put
     sm-ae-pageof sm-ae-pg-si sm-ae-pg-n put
     /sm-ae-pg-cnt sm-ae-pg-cnt 1 add def
-    /sm-ae-pg-y sm-ae-pg-y sm-ae-pg-h 3.2 sm-ae-sp mul add sub def   % y - (h + gap), as layout.js
+    /sm-ae-pg-y sm-ae-pg-y sm-ae-pg-h 3.2 sm-ae-sp mul add sub def   % y - (h + gap), as the JS layout did
   } for
   % words after the tune
   /sm-ae-words sm-ae-S /meta get /words sm-ae-get dup null eq { pop [] } if def
@@ -1489,6 +1489,16 @@ sm-ae-dict begin
     } if
   } forall
 } bind def
+% npages sm-ae-annwarn - : a reader's mark on a page the score does not have
+%   is a warning ("annotation on page 3, but the score has 1"), unless /quiet
+/sm-ae-annwarn {
+  /sm-ae-anw-n exch def
+  sm-ae-O /quiet sm-ae-get true ne {
+    sm-ae-annotations { /page sm-ae-get dup null eq { pop 1 } if
+      dup sm-ae-anw-n gt { (sm-abc: warning: annotation on page ) print 20 string cvs print
+        (, but the score has ) print sm-ae-anw-n 20 string cvs = } { pop } ifelse } forall
+  } if
+} bind def
 
 % ---------------------------------------------------------------- page furniture
 /sm-ae-tempo {
@@ -1557,6 +1567,7 @@ sm-ae-dict begin
   /sm-ae-left sm-ae-o-margin def
   /sm-ae-right sm-ae-PW sm-ae-o-margin sub def
   sm-ae-NM 0 eq {
+    1 sm-ae-annwarn
     /sm-ae-ti-draw true def sm-ae-title pop showpage
   } {
     sm-ae-phase-state
@@ -1577,6 +1588,7 @@ sm-ae-dict begin
     sm-ae-phase-pages
     sm-ae-phase-seq
     sm-ae-phase-span
+    sm-ae-NPAGES sm-ae-annwarn
     0 1 sm-ae-NPAGES 1 sub { /sm-ae-pp exch def
       sm-ae-pp true sm-ae-annots
       sm-ae-pp 0 eq { /sm-ae-ti-draw true def sm-ae-title pop } if

@@ -85,3 +85,19 @@ test('readMeta skips pscat\'s own lines (pscat#1058) and says when nothing was p
   assert.deepEqual(readMeta('{"a":1}\npscat: wrote /tmp/x.pdf\n'), { a: 1 });
   assert.throws(() => readMeta('sm-abc: error: oops\n'), /no score metadata: sm-abc: error: oops/);
 });
+
+test('an annotation on a page the score does not have is a warning when it engraves', { skip }, async () => {
+  const src = read('samples/twinkle.abc').trimEnd() + '\n%%annotation page=3 type=text x=10 y=10 text="far"\n%%annotation page=1 type=text x=10 y=10 text="near"\n';
+  const meta = await psMeta(src, {});
+  assert.deepEqual(meta.annotations.map((a) => a.page), [3, 1]);
+  const doc = (extra) => selfContainedPS(src, { engraveLib: read('lib/sm_engrave.ps'), ...LIBS, embedScore: false, meta, ...extra });
+  const warnings = (d) => renderer.render(d.ps, { width: d.size[0], height: d.size[1] }).output.split('\n').filter((l) => l.startsWith('sm-abc: warning: '));
+  assert.deepEqual(warnings(doc()), ['sm-abc: warning: annotation on page 3, but the score has 1']);
+  // page 2 of a five-page score is there
+  const long = read('samples/twinkle.abc').trimEnd().split('\n');
+  const k = long.findIndex((l) => l.startsWith('K:'));
+  const body = long.slice(k + 1).join('\n').replace(/\|\]/g, '|');
+  const src2 = [...long.slice(0, k + 1), ...Array(12).fill(body), '%%annotation page=2 type=text x=10 y=10 text="p2"', '%%annotation page=9 type=text x=10 y=10 text="p9"', ''].join('\n');
+  const d2 = selfContainedPS(src2, { engraveLib: read('lib/sm_engrave.ps'), ...LIBS, embedScore: false, meta: await psMeta(src2, {}) });
+  assert.deepEqual(warnings(d2), ['sm-abc: warning: annotation on page 9, but the score has 5']);
+});

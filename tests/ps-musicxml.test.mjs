@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMusicXML, parseXML } from '../src/musicxml.js';
-import { parseAnnotations } from '../src/index.js';
+import { parseAnnotations, scoreMeta } from '../src/index.js';
 import { psLiteral } from '../src/ps.js';
 import { selfContainedPS } from '../src/psdoc.js';
 
@@ -105,9 +105,10 @@ test('a self-contained document parses MusicXML in PostScript when lib/sm_musicx
     const src = readFileSync(file, 'utf8');
     const base = { engraveLib: ENGRAVE, abcLib: ABC, parseLib: PARSE, transposeLib: TRANSPOSE };
     const plain = selfContainedPS(src, base);
-    assert.ok(!plain.ps.includes('sm-musicxml-'), 'without musicxmlLib nothing changes');
-    // no Score literal to fall back on: only the PS parser can draw it
-    const viaPS = selfContainedPS(src, { ...base, musicxmlLib: MXL, embedScore: false, transpose: 1 });
+    assert.ok(!plain.ps.slice(plain.ps.indexOf('%%EndProlog')).includes('sm-musicxml-'), 'without musicxmlLib the driver is the Score-literal one');
+    // no Score literal to fall back on: only the PS parser can draw it (the
+    // metadata, which sheet and the editor get from sm-score-meta, from the JS reference)
+    const viaPS = selfContainedPS(src, { ...base, musicxmlLib: MXL, embedScore: false, transpose: 1, meta: scoreMeta(src, { transpose: 1 }) });
     assert.ok(viaPS.ps.includes('sm-musicxml-engrave-string') && viaPS.ps.includes('/sm-abc-score null def'));
     const a = pscat(plain.ps.replace('/sm-abc-options <<', '/sm-abc-options << /quiet true /transpose 1'));
     const b = pscat(viaPS.ps.replace('/sm-abc-options <<', '/sm-abc-options << /quiet true'));

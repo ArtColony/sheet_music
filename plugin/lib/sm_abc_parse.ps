@@ -1298,6 +1298,109 @@ sm-abcp-dict begin
   } ifelse } ifelse } ifelse } ifelse } ifelse } ifelse
 } bind def
 
+% ================================================================ score meta
+% What a caller needs to know about a text without engraving it, for
+% sm-score-meta: the chosen tune's title, composer, transposition and
+% %%annotation marks, the list of tunes and the parse warnings. The JS side
+% (bin/sheet.mjs, the editor) reads it instead of parsing; src/index.js
+% scoreMeta is the reference it is tested against (tests/ps-meta.test.mjs).
+% /name (file.ps) sm-abcp-need - : run lib/file.ps (from sm-lib-dir when
+%   defined, else (lib/)) unless name is defined; quietly nothing when absent
+/sm-abcp-need {
+  1 index where { pop pop pop } { mark exch {
+    /sm-lib-dir where { pop sm-lib-dir } { (lib/) } ifelse exch sm-abcp-cat run
+  } stopped cleartomark pop } ifelse
+} bind def
+% text sm-abcp-isxml bool : MusicXML rather than ABC (src/index.js
+%   detectFormat: the first 2000 bytes, leading white space and a BOM
+%   skipped, start with <?xml or hold <score-partwise or <score-timewise)
+/sm-abcp-isxml {
+  dup length 2000 min 0 exch getinterval
+  { dup length 0 eq { exit } if
+    dup 0 get dup 32 eq exch dup 9 ge exch 13 le and or { 1 sm-abcp-tail } {
+    dup (\357\273\277) anchorsearch { pop exch pop } { pop exit } ifelse } ifelse } loop
+  dup (<?xml) sm-abcp-pre { pop true } {
+    dup (<score-partwise) sm-abcp-has { pop true } { (<score-timewise) sm-abcp-has } ifelse } ifelse
+} bind def
+% [lines] sm-abcp-infann [<< /line /color /page /type /x /y /w /h /rgb /text >> ...]
+%   the %%annotation marks with their line (0-based, in these lines) and
+%   colour as written (src/index.js parseAnnotations)
+/sm-abcp-infann {
+  /sm-abcp-infl exch def
+  [ 0 1 sm-abcp-infl length 1 sub { /sm-abcp-infi exch def
+      sm-abcp-infl sm-abcp-infi get sm-abcp-annot dup null eq { pop } {
+        dup /line sm-abcp-infi put dup /color sm-abcp-acol put } ifelse } for ]
+} bind def
+% d k sm-abcp-infget v|null
+/sm-abcp-infget { 2 copy known { get } { pop pop null } ifelse } bind def
+% d k sm-abcp-infint n : an integer option (absent or null: 0)
+/sm-abcp-infint { sm-abcp-infget dup null eq { pop 0 } if cvi } bind def
+% score sm-abcp-inftitle (title) : the title, (Untitled) when it has none
+/sm-abcp-inftitle {
+  /meta get /title sm-abcp-infget dup null eq { pop () } if dup length 0 eq { pop (Untitled) } if
+} bind def
+% text options sm-abcp-info dict
+/sm-abcp-info {
+  /sm-abcp-info-o exch def /sm-abcp-info-t exch def
+  /sm-abcp-info-tune sm-abcp-info-o /tune sm-abcp-infint def
+  /sm-abcp-info-semis sm-abcp-info-o /transpose sm-abcp-infint def
+  sm-abcp-info-o /format sm-abcp-infget dup null eq { pop sm-abcp-info-t sm-abcp-isxml { (musicxml) } { (abc) } ifelse } {
+    dup type /nametype eq { dup length string cvs } if } ifelse
+  /sm-abcp-info-fmt exch def
+  /sm-abcp-info-err null def /sm-abcp-info-s null def
+  /sm-abcp-info-tr 0 def /sm-abcp-info-an [] def
+  sm-abcp-info-fmt (musicxml) eq {
+    /sm-musicxml-parse (sm_musicxml.ps) sm-abcp-need
+    /sm-musicxml-parse where {
+      pop mark sm-abcp-info-t { sm-musicxml-parse } stopped {
+        cleartomark
+        /sm-musicxml-error where { pop sm-musicxml-error } { null } ifelse
+        dup null eq { pop (internal error: ) $error /errorname get 64 string cvs sm-abcp-cat } if
+        /sm-abcp-info-err exch def
+      } { /sm-abcp-info-s exch def pop } ifelse
+      /sm-abcp-info-w sm-musicxml-warnings def
+    } { /sm-abcp-info-err (lib/sm_musicxml.ps is not loaded) def /sm-abcp-info-w [] def } ifelse
+    /sm-abcp-info-tunes sm-abcp-info-s null eq { [] } {
+      [ << /index 0 /title sm-abcp-info-s sm-abcp-inftitle /x null >> ] } ifelse def
+    sm-abcp-info-s null ne {
+      /sm-abcp-info-tr sm-abcp-info-t 0 sm-abcp-tunetr def
+      /sm-abcp-info-an sm-abcp-info-t sm-abcp-splitlines sm-abcp-infann def
+    } if
+  } {
+    sm-abcp-info-t sm-abcp-all /sm-abcp-info-w exch def /sm-abcp-info-ss exch def
+    userdict /sm-abc-warnings sm-abcp-info-w put
+    /sm-abcp-info-tl sm-abcp-info-t sm-abcp-tunelines def
+    /sm-abcp-info-tunes [ 0 1 sm-abcp-info-ss length 1 sub { /sm-abcp-infi exch def
+      << /index sm-abcp-infi /title sm-abcp-info-ss sm-abcp-infi get sm-abcp-inftitle
+         /x sm-abcp-info-tl sm-abcp-infi get dup length 0 gt {
+           0 get dup (X:) sm-abcp-pre { 2 sm-abcp-tail sm-abcp-trim sm-abcp-copy } { pop null } ifelse
+         } { pop null } ifelse >>
+    } for ] def
+    sm-abcp-info-tune 0 ge sm-abcp-info-tune sm-abcp-info-ss length lt and {
+      /sm-abcp-info-s sm-abcp-info-ss sm-abcp-info-tune get def
+      /sm-abcp-info-tr sm-abcp-info-t sm-abcp-info-tune sm-abcp-tunetr def
+      /sm-abcp-info-an sm-abcp-info-tl sm-abcp-info-tune get sm-abcp-infann def
+    } {
+      /sm-abcp-info-err (no tune number ) sm-abcp-info-tune 1 add sm-abcp-itoa sm-abcp-cat
+        ( \(the input has ) sm-abcp-cat sm-abcp-info-ss length sm-abcp-itoa sm-abcp-cat (\)) sm-abcp-cat def
+    } ifelse
+  } ifelse
+  /sm-abcp-info-tot sm-abcp-info-tr sm-abcp-info-semis add def
+  /sm-abcp-info-tp null def
+  sm-abcp-info-s null ne sm-abcp-info-tot 0 ne and {
+    /sm-score-transpose (sm_transpose.ps) sm-abcp-need
+    /sm-score-transpose where { pop
+      sm-abcp-info-s sm-abcp-info-tot sm-score-transpose /transposed get /sm-abcp-info-tp exch def
+    } { /sm-abcp-info-err (lib/sm_transpose.ps is not loaded) def } ifelse
+  } if
+  << /annotations sm-abcp-info-an
+     /composer sm-abcp-info-s null eq { null } { sm-abcp-info-s /meta get /composer sm-abcp-infget dup null eq { pop () } if } ifelse
+     /error sm-abcp-info-err /format sm-abcp-info-fmt /sourceTranspose sm-abcp-info-tr
+     /title sm-abcp-info-s null eq { null } { sm-abcp-info-s sm-abcp-inftitle } ifelse
+     /transpose sm-abcp-info-tot /transposed sm-abcp-info-tp
+     /tune sm-abcp-info-tune /tunes sm-abcp-info-tunes /warnings sm-abcp-info-w >>
+} bind def
+
 end % sm-abcp-dict
 
 % ================================================================ public
@@ -1309,5 +1412,11 @@ end % sm-abcp-dict
 /sm-abc-json { sm-abcp-dict begin sm-abcp-json end } bind def
 /sm-abc-annotations { sm-abcp-dict begin sm-abcp-annots end } bind def
 /sm-abc-tune-transpose { sm-abcp-dict begin sm-abcp-tunetr end } bind def
+% (text) [options] sm-score-meta-dict dict : what sm-score-meta prints, as a dictionary
+/sm-score-meta-dict { dup type /stringtype eq { 0 dict } if sm-abcp-dict begin sm-abcp-info end } bind def
+% (text) [options] sm-score-meta - : print the score's metadata as one JSON line
+/sm-score-meta { sm-score-meta-dict sm-abc-json (\n) print } bind def
+% (path) [options] sm-score-meta-file - : the same for a file
+/sm-score-meta-file { dup type /stringtype eq { 0 dict } if exch sm-abcp-dict begin sm-abcp-readfile end exch sm-score-meta } bind def
 
 end % userdict

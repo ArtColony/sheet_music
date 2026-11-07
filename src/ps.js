@@ -68,22 +68,6 @@ export function text(s, size = 11) {
   return '[' + items.join(' ') + ']';
 }
 
-// Rough advance widths (em fractions) for spacing decisions only; the PS
-// side measures exactly with stringwidth when it centres text.
-const NARROW = new Set("iljtfr.,;:'!|()[] -`");
-const WIDE = new Set('mwMW@%');
-export function approxWidth(s, size, bold = false) {
-  let w = 0;
-  for (const ch of String(s)) {
-    if (NARROW.has(ch)) w += 0.3;
-    else if (WIDE.has(ch)) w += 0.85;
-    else if (/[A-Z]/.test(ch)) w += 0.68;
-    else if (/[0-9]/.test(ch)) w += 0.5;
-    else w += 0.47;
-  }
-  return w * size * (bold ? 1.06 : 1);
-}
-
 /**
  * Any JSON-like value as a PostScript literal: objects -> << /key value >>
  * (keys sorted), arrays -> [ ], strings -> (escaped, non-ASCII as \ooo of

@@ -21,11 +21,11 @@
 // caller runs it in pscat and readMeta() turns the output into options.meta.
 // Only the Score-literal fallback (embedScore) runs the JS parser.
 import { parse, detectFormat, scoreMeta } from './index.js';
-import { PAPERS } from './layout.js';
+import { PAPERS } from './paper.js';
 import { psLiteral } from './ps.js';
 
 export const END_MARK = '%%SM-ABC-END';
-const dscText = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7e]/g, '?');
+const dscText = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '?');
 const checkSource = (src) => { if (src.split(/\r?\n/).some((l) => l === END_MARK)) throw Error(`the source contains the line ${END_MARK}`); };
 const sourceText = (src) => src.replace(/\r\n?/g, '\n').replace(/\n$/, '');
 

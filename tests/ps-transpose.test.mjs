@@ -4,7 +4,8 @@
 // intervals, sm-abc-parse-all + sm-score-transpose printed with sm-abc-json
 // deep-equals JSON of parse + transposeScore. The helpers are checked on a
 // grid against the exported JS ones, %%transpose against tuneTranspose, and
-// the engraved pages against the JS engraver's.
+// the engraved pages against the PostScript engraving of the JS-transposed
+// Score.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -13,7 +14,7 @@ import { inflateSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, tuneTranspose, transposeScore, fifthsShift, transposeChord, toPostScript } from '../src/index.js';
+import { parse, tuneTranspose, transposeScore, fifthsShift, transposeChord } from '../src/index.js';
 import { movePitch } from '../src/transpose.js';
 import { splitTunes } from '../src/abc.js';
 import { selfContainedPS } from '../src/psdoc.js';
@@ -140,9 +141,9 @@ test('sm-abc-tune-transpose reads %%transpose like tuneTranspose', { skip }, () 
   const [got] = lines(pscat(`${PARSE}\n[ ${calls.join('\n')} ] sm-abc-json (\\n) print`));
   assert.deepEqual(got, want);
   assert.ok(want.filter((v) => v !== 0).length >= 8);
-  // and toPostScript agrees with tuneTranspose
-  assert.equal(toPostScript(cases[1], { lib: ENGRAVE, tune: 1 }).transposed.semis, 3);
-  assert.equal(toPostScript(cases[2], { lib: ENGRAVE }).transposed.semis, 5);
+  // and selfContainedPS (what it reports, the PDF's Subject) agrees with tuneTranspose
+  assert.equal(selfContainedPS(cases[1], { engraveLib: ENGRAVE, abcLib: ABC, tune: 1 }).transposed.semis, 3);
+  assert.equal(selfContainedPS(cases[2], { engraveLib: ENGRAVE, abcLib: ABC }).transposed.semis, 5);
 });
 
 test('every name sm_transpose.ps defines, temporaries included, starts with sm-', { skip }, () => {
@@ -221,7 +222,7 @@ const diffCount = (a, b, tol) => {
   return n;
 };
 
-test('--engine ps --transpose: exactly the PostScript engraving of the JS-transposed Score, and the JS engraver\'s page', { skip }, () => {
+test('--engine ps --transpose: exactly the PostScript engraving of the JS-transposed Score', { skip }, () => {
   for (const [f, k] of [['samples/feature-tour.abc', 2], ['samples/greensleeves.abc', -5], ['samples/mountain-king.abc', 6], ['samples/frere-jacques.musicxml', 7]]) {
     const src = read(f);
     // A: what sheet --engine ps --transpose k writes: PostScript parses and transposes
@@ -239,21 +240,13 @@ test('--engine ps --transpose: exactly the PostScript engraving of the JS-transp
     const pb = docB.replace(/ps$/, 'pdf');
     execFileSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', pb, docB], { stdio: 'pipe' });
     assert.ok(readFileSync(pa).equals(readFileSync(pb)), `${f} ${k}: PDF differs from the engraving of the JS-transposed Score`);
-    // and the page matches the JS engraver's (within anti-aliasing, as untransposed)
-    const js = toPostScript(src, { lib: ENGRAVE, transpose: k });
-    assert.equal(js.transposed.semis, k);
-    const jsFile = path.join(tmp, `js${runs}.ps`);
-    writeFileSync(jsFile, js.ps);
-    const docA = writeDoc(src, { transpose: k });
-    const gJs = pngOf(jsFile, page), gPs = pngOf(docA, page);
-    assert.equal(diffCount(gJs, gPs, 64), 0, `${f} ${k}: the page differs from the JS engraver's`);
   }
 });
 
 test('%%transpose in the source and the option add up on the PostScript path; the result reports it', { skip }, async () => {
   const src = read('samples/twinkle.abc').replace(/^K:/m, '%%transpose -3\nK:');
   const r = selfContainedPS(src, { engraveLib: ENGRAVE, abcLib: ABC, parseLib: PARSE, transposeLib: TRANSPOSE, transpose: 5 });
-  assert.deepEqual(r.transposed, toPostScript(src, { lib: ENGRAVE, transpose: 5 }).transposed);
+  assert.deepEqual(r.transposed, transposeScore(parse(src).scores[0], 2).transposed); // -3 + 5
   assert.equal(r.transposed.semis, 2);
   assert.deepEqual(r.warnings, []);
   // PS (parser + directive) and the fallback (embedded literal + total) give the same PDF

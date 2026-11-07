@@ -217,6 +217,57 @@ dictionary `src/score.js` describes (`/meta /initial /staves /measures
 (samples/twinkle.abc) sm-abc-parse-file /meta get /title get =    % Twinkle, Twinkle, Little Star
 ```
 
+### Score metadata as JSON
+
+Also in [`lib/sm_abc_parse.ps`](../lib/sm_abc_parse.ps) (#9). `sm-score-meta`
+prints what a program around the engraver needs to know about a text without
+engraving it, as one line of JSON (keys sorted, then a newline): the title
+and composer for the PDF, the key after transposition, the list of tunes,
+the reader's marks and the parse warnings. `sheet` (`bin/sheet.mjs`) and the
+editor run it first (`src/psdoc.js` `metaPS` writes the document, `readMeta`
+reads the line) and write the engraving document from it, so neither parses
+the source in JavaScript. `tests/ps-meta.test.mjs` checks it against the JS
+parser (`src/index.js` `scoreMeta`) for every sample and fixture, every tune,
+transposed 0, +2 and −5.
+
+| Procedure | Stack |
+|---|---|
+| `sm-score-meta` | `(text) [options] sm-score-meta –`: print the JSON line |
+| `sm-score-meta-file` | `(path) [options] sm-score-meta-file –`: the same for a file |
+| `sm-score-meta-dict` | `(text) [options] sm-score-meta-dict dict`: the same keys as a dictionary, printing nothing |
+
+Options: `/tune` (0-based), `/transpose` (semitones; the tune's
+`%%transpose` adds to it) and `/format` (`(abc)` or `(musicxml)`; without it
+the text is sniffed as `src/index.js` `detectFormat` does). MusicXML needs
+`lib/sm_musicxml.ps` and a transposition `lib/sm_transpose.ps`; both are run
+from `sm-lib-dir` (else `lib/`) when they are not loaded.
+
+| Key | Value |
+|---|---|
+| `title` | the chosen tune's title, `Untitled` when it has none (`null` with an `error`) |
+| `composer` | its `C:` lines (`""` when none) |
+| `format` | `abc` or `musicxml` |
+| `tune` | the `/tune` asked for |
+| `tunes` | `[{ "index": 0, "title": "...", "x": "1" }, ...]`: every tune; `x` is the `X:` number as written, `null` without one (and for MusicXML) |
+| `sourceTranspose` | the tune's `%%transpose` (else the file header's), as `sm-abc-tune-transpose` |
+| `transpose` | the total: `/transpose` plus `sourceTranspose` |
+| `transposed` | `{ "key": "D", "semis": 2 }`: the major key the signature shows after transposing, or `null` when the total is 0 |
+| `annotations` | the tune's `%%annotation` marks: the `/annotations` option's keys (positions and colour rounded to 2 decimals) plus `line` (0-based, counted from the tune's `X:` line; in the whole text for MusicXML) and `color` as written (`red`, `#1f5fbf`) |
+| `warnings` | the parser's warnings, as `sm-abc-warnings` / `sm-musicxml-warnings` |
+| `error` | `null`, or why there is no score: `no tune number 4 (the input has 1)`, or the MusicXML parser's reason (`not a MusicXML score (no <score-partwise>)`) |
+
+```
+$ pscat --pdf /dev/null -e '(lib/sheet.ps) run (samples/twinkle.abc) << /transpose 2 >> sm-score-meta-file'
+{"annotations":[],"composer":"French traditional (1761)","error":null,"format":"abc","sourceTranspose":0,"title":"Twinkle, Twinkle, Little Star","transpose":2,"transposed":{"key":"D","semis":2},"tune":0,"tunes":[{"index":0,"title":"Twinkle, Twinkle, Little Star","x":"1"}],"warnings":[]}
+```
+
+pscat's CLI prints its own `pscat: wrote ...` line on stdout right after
+the program's output (pscat#1058); skip lines that start with `pscat: `.
+Whether a reader's mark falls on a page the score has is known only once
+it is laid out: the engrave procedures print
+`sm-abc: warning: annotation on page 3, but the score has 1` for one that
+does not (unless `/quiet true`).
+
 ## MusicXML
 
 From [`lib/sm_musicxml.ps`](../lib/sm_musicxml.ps) (#5), which `sheet.ps`
@@ -669,19 +720,22 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (ABC parser), `sm-mxp-`
 | `sm-musicxml-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L265) |  |
 | `sm-musicxml-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L266) |  |
 | `sm-r2` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L63) |  |
-| `sm-abc-engrave` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1594) |  |
-| `sm-abc-readsrc` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1609) | file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF) |
-| `sm-abc-print-warnings` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1626) |  |
-| `sm-abc-engrave-string` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1633) |  |
-| `sm-abc-engrave-file` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1670) |  |
-| `sm-abc-warnings` | value | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1304) |  |
-| `sm-abc-parse-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1305) |  |
-| `sm-abc-parse` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1306) |  |
-| `sm-abc-parse-file-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1307) |  |
-| `sm-abc-parse-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1308) |  |
-| `sm-abc-json` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1309) |  |
-| `sm-abc-annotations` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1310) |  |
-| `sm-abc-tune-transpose` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1311) |  |
+| `sm-abc-engrave` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1606) |  |
+| `sm-abc-readsrc` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1621) | file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF) |
+| `sm-abc-print-warnings` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1638) |  |
+| `sm-abc-engrave-string` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1645) |  |
+| `sm-abc-engrave-file` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1682) |  |
+| `sm-abc-warnings` | value | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1407) |  |
+| `sm-abc-parse-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1408) |  |
+| `sm-abc-parse` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1409) |  |
+| `sm-abc-parse-file-all` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1410) |  |
+| `sm-abc-parse-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1411) |  |
+| `sm-abc-json` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1412) |  |
+| `sm-abc-annotations` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1413) |  |
+| `sm-abc-tune-transpose` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1414) |  |
+| `sm-score-meta-dict` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1416) | (text) [options] sm-score-meta-dict dict : what sm-score-meta prints, as a dictionary |
+| `sm-score-meta` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1418) | (text) [options] sm-score-meta - : print the score's metadata as one JSON line |
+| `sm-score-meta-file` | proc | [lib/sm_abc_parse.ps](../lib/sm_abc_parse.ps#L1420) | (path) [options] sm-score-meta-file - : the same for a file |
 | `sm-sp` | value | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L18) |  |
 | `sm-ink` | value | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L19) |  |
 | `sm-mtx` | value | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L22) |  |

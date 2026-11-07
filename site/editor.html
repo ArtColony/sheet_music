@@ -202,10 +202,18 @@ function opts() {
 }
 // The self-contained document for the text: ABC and MusicXML are parsed in
 // PostScript (no Score literal is embedded). perform: print the notes instead.
-function documentOf(text, o, perform = false) {
+// meta: what PostScript knows about the text (metaOf), for the document's
+// header, the tune list, the annotations and the PDF's metadata.
+function documentOf(text, o, perform = false, meta = null) {
   const L = bundle.libs;
-  const xml = engine.detectFormat(text) === 'musicxml';
-  return psdoc.selfContainedPS(text, { ...o, engraveLib: L.engrave, abcLib: L.abc, parseLib: L.parse, transposeLib: L.transpose, performLib: L.perform, musicxmlLib: L.musicxml, embedScore: xml && !L.musicxml, perform });
+  return psdoc.selfContainedPS(text, { ...o, engraveLib: L.engrave, abcLib: L.abc, parseLib: L.parse, transposeLib: L.transpose, performLib: L.perform, musicxmlLib: L.musicxml, embedScore: false, perform, meta });
+}
+// the title, composer, key after transposition, tunes, annotations and
+// warnings, printed by PostScript (lib/sm_abc_parse.ps sm-score-meta)
+function metaOf(text, o) {
+  const L = bundle.libs;
+  const ps = psdoc.metaPS(text, { ...o, abcLib: L.abc, parseLib: L.parse, transposeLib: L.transpose, musicxmlLib: L.musicxml });
+  return psdoc.readMeta(renderer.render(ps, { width: 8, height: 8 }).output);
 }
 // what the PostScript printed: its warnings and errors ("sm-abc: warning: ...")
 const printedLines = (out, kind) => String(out || '').split('\n').filter((l) => l.startsWith(`sm-abc: ${kind}: `)).map((l) => l.slice(10 + kind.length));
@@ -227,9 +235,10 @@ function render() {
   let r;
   const o = opts();
   try {
-    r = documentOf(text, o);
-    r.tunes = engine.parse(text).scores.map((s) => s.meta.title || 'Untitled');
-    r.annotations = engine.tuneAnnotations(text, o.tune);
+    let meta = metaOf(text, o);
+    // the text lost the chosen tune: back to the first
+    if (meta.error && meta.tunes.length && o.tune >= meta.tunes.length) { o.tune = 0; meta = metaOf(text, o); }
+    r = documentOf(text, o, false, meta);
   } catch (e) {
     status(`<div class="err">${esc(e.message)}</div>`);
     return;
@@ -241,7 +250,7 @@ function render() {
     if (els.tune.options.length !== r.tunes.length || [...els.tune.options].some((o, i) => o.text !== `${i + 1}. ${r.tunes[i]}`)) {
       els.tune.innerHTML = '';
       r.tunes.forEach((t, i) => els.tune.add(new Option(`${i + 1}. ${t}`, String(i))));
-      els.tune.value = cur && +cur < r.tunes.length ? cur : '0';
+      els.tune.value = cur && +cur < r.tunes.length ? cur : String(o.tune);
     }
   } else { els.tuneWrap.hidden = true; els.tune.innerHTML = ''; }
   let svgs, printed;
@@ -252,8 +261,8 @@ function render() {
     status(`<div class="err">${esc(e.report || e.message)}</div>`);
     return;
   }
-  // the PostScript parser's warnings (the JS parser's only if it had to stand in)
-  r.warnings = [...(r.format === 'abc' || bundle.libs.musicxml ? printedLines(printed, 'warning') : r.warnings), ...printedLines(printed, 'error')];
+  // the warnings PostScript printed as it engraved (the parser's, and marks on a missing page)
+  r.warnings = [...printedLines(printed, 'warning'), ...printedLines(printed, 'error')];
   r.pages = svgs.length;
   last = r;
   urls.forEach((u) => URL.revokeObjectURL(u));
