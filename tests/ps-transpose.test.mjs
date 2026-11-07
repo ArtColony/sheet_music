@@ -1,24 +1,22 @@
 // Transposition in PostScript (lib/sm_transpose.ps, issue #6) must give
-// exactly what src/transpose.js gives: for every ABC sample (and the parse
-// edge-case fixture, and a tune made to reach the corners) at several
-// intervals, sm-abc-parse-all + sm-score-transpose printed with sm-abc-json
-// deep-equals JSON of parse + transposeScore. The helpers are checked on a
-// grid against the exported JS ones, %%transpose against tuneTranspose, and
-// the engraved pages against the PostScript engraving of the JS-transposed
-// Score.
+// exactly what the retired src/transpose.js gave (frozen in
+// tests/fixtures/reference/transpose.json): for every ABC sample (and the
+// parse edge-case fixture, and two tunes made to reach the corners) at
+// several intervals, sm-abc-parse-all + sm-score-transpose printed with
+// sm-abc-json must hash to the JSON of parse + transposeScore. The helpers
+// are checked on a grid, %%transpose against tuneTranspose, and the
+// engraved pages against the PostScript engraving of the JS-transposed Score.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, tuneTranspose, transposeScore, fifthsShift, transposeChord } from '../src/index.js';
-import { movePitch } from '../src/transpose.js';
-import { splitTunes } from '../src/abc.js';
-import { selfContainedPS } from '../src/psdoc.js';
 import { psLiteral } from '../src/ps.js';
+import { psEngineDoc, psMeta } from '../bin/sheet.mjs';
+import { reference, refHash } from './reference.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
@@ -31,35 +29,18 @@ const skip = !existsSync(PSCAT) && 'pscat CLI not installed (npm run pscat:fetch
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-pstranspose-'));
 process.on('exit', () => rmSync(tmp, { recursive: true, force: true }));
 
-const INTERVALS = [-12, -5, -2, 1, 2, 6, 7, 11];
-
-// a tune that reaches what the samples do not: every accidental on every
-// step (double ones need respelling at some intervals), key changes inline
-// and in the body, two voices, grace notes, chord symbols with # b and the
-// sharp/flat signs, slash chords, text that is not a chord, double spaces
-const CORNERS = `X:1
-T:Corners
-M:4/4
-L:1/8
-V:1
-V:2 clef=bass
-K:F#
-[V:1] "F#m7/C#"^^C ^C =C _C __C "Bb/D"^^D ^D =D | "N.C."_D __D ^^E ^E "E\u266dm7/B\u266f"=E _E __E ^^F |
-[V:2] "C/G7"^F, =F, _F, __F, "Am  D7"^^G, ^G, =G, _G, | __G, ^^A, ^A, =A, _A, __A, ^^B, ^B, |
-[V:1] [K:Eb] {^^c__d}=B _B __B c d e f g | [K:C#m] "G\u266f"c' b a g {=f}f e d c |]
-[V:2] [K:Eb] =B,, _B,, __B,, C, D, E, F, G, | [K:C#m] C D E F G A B c |]
-`;
-
-// a file whose only key is an inline [K:] field: the score's initial key is
-// the same object as that measure's key, which JS then moves only once
-const INLINE_KEY = 'X:1\nT:Inline key\nL:1/8\nAB cd | [K:G] cd ef |]\n';
-
-const sources = [
-  ...readdirSync(path.join(root, 'samples')).filter((f) => f.endsWith('.abc')).sort().map((f) => [`samples/${f}`, read(`samples/${f}`)]),
-  ['tests/fixtures/parse-edge.abc', read('tests/fixtures/parse-edge.abc')],
-  ['corners', CORNERS],
-  ['inline key', INLINE_KEY],
-];
+const REF = reference('transpose');
+const INTERVALS = REF.intervals;
+// every ABC sample, the parse edge-case fixture, and:
+// tests/fixtures/reference/transpose-corners.abc reaches what the samples do
+// not: every accidental on every step (double ones need respelling at some
+// intervals), key changes inline and in the body, two voices, grace notes,
+// chord symbols with # b and the sharp/flat signs, slash chords, text that
+// is not a chord, double spaces; tests/fixtures/reference/inline-key.abc has
+// only an inline [K:] field: the score's initial key is the same object as
+// that measure's key, which the JS then moved only once
+const CORNERS = 'tests/fixtures/reference/transpose-corners.abc';
+const sources = Object.keys(REF.scores).map((f) => [f, read(f)]);
 
 // Write a program to a file and run it with --lint-strict (a file, not stdin:
 // docs/FRICTION.md #11); returns stdout. A dot is painted so the lint sees ink.
@@ -72,7 +53,6 @@ function pscat(prog, args = []) {
 
 }
 const lines = (out) => out.split('\n').filter((l) => l.length).map((l) => JSON.parse(l));
-const jsTransposed = (src, k) => JSON.parse(JSON.stringify(parse(src, { format: 'abc' }).scores.map((s) => transposeScore(s, k))));
 
 for (const [name, src] of sources) {
   test(`${name}: sm-score-transpose equals transposeScore at ${INTERVALS.join(' ')}`, { skip }, () => {
@@ -80,27 +60,30 @@ for (const [name, src] of sources) {
       + INTERVALS.map((k) => `sm-t-src sm-abc-parse-all dup { ${k} sm-score-transpose pop } forall sm-abc-json (\\n) print`).join('\n');
     const got = lines(pscat(prog));
     assert.equal(got.length, INTERVALS.length);
-    INTERVALS.forEach((k, i) => assert.deepEqual(got[i], jsTransposed(src, k), `${name} transposed ${k}`));
+    INTERVALS.forEach((k, i) => assert.equal(refHash(got[i]), REF.scores[name][k], `${name} transposed ${k}`));
   });
 }
 
 test('0, null and a real: untouched, untouched, truncated', { skip }, () => {
   const src = read('samples/greensleeves.abc');
   const got = lines(pscat(`${PARSE}\n${TRANSPOSE}\n${[0, 'null', 2.7, -2.7].map((k) => `${psLiteral(src)} sm-abc-parse ${k} sm-score-transpose sm-abc-json (\\n) print`).join('\n')}`));
-  const base = jsTransposed(src, 0)[0];
-  assert.equal(base.transposed, undefined);
-  assert.deepEqual(got, [base, base, jsTransposed(src, 2)[0], jsTransposed(src, -2)[0]]);
+  assert.equal(got[0].transposed, undefined);
+  assert.deepEqual(got[0], reference('abc-parse').scores['samples/greensleeves.abc'].scores[0]);
+  assert.deepEqual(got[1], got[0]);
+  // the JS gave greensleeves untouched, untouched, +2 and -2
+  assert.deepEqual(got.map(refHash), REF.greensleeves.sha);
+  assert.deepEqual(got.slice(2).map((g) => g.transposed.semis), [2, -2]);
 });
 
 test('fifths shift, pitch moves and chord symbols agree with the JS helpers on a grid', { skip }, () => {
   const semis = Array.from({ length: 25 }, (_, i) => i - 12);
   const fifths = Array.from({ length: 15 }, (_, i) => i - 7);
-  const wantShift = semis.map((s) => fifths.map((f) => fifthsShift(s, f)));
+  const wantShift = REF.fifthsShift;
   const pitches = [];
   for (const step of 'CDEFGAB') for (const alter of [-2, -1, 0, 1, 2]) for (const s of semis) for (const f of [-7, 0, 7]) for (const respell of [true, false]) {
-    pitches.push({ step, oct: 4, alter, s, df: fifthsShift(s, f), respell });
+    pitches.push({ step, oct: 4, alter, s, df: wantShift[s + 12][f + 7], respell });
   }
-  const chords = ['Am7', 'Bb/D', 'F#m', 'Eb', 'N.C.', 'C/G7', 'C/', 'Cb', 'B#dim', 'G\u266fm7/D\u266d', 'E\u266d', 'A\u266f/', 'D/F\u266f', 'Am  D7', ' G ', '', 'H', 'Bbb', 'C/Bb', 'C/Bbb', 'c', 'Dsus4/A'];
+  const chords = REF.chords.list;
   const dfs = Array.from({ length: 24 }, (_, i) => i - 12);
   const prog = `${PARSE}\n${TRANSPOSE}\n`
     + `[ ${semis.map((s) => `[ ${fifths.map((f) => `${s} ${f} sm-transpose-fifths-shift`).join(' ')} ]`).join(' ')} ] sm-abc-json (\\n) print\n`
@@ -108,42 +91,27 @@ test('fifths shift, pitch moves and chord symbols agree with the JS helpers on a
     + `[ ${chords.map((c) => `[ ${dfs.map((d) => `${psLiteral(c)} ${d} sm-transpose-chord`).join(' ')} ]`).join('\n')} ] sm-abc-json (\\n) print`;
   const [gotShift, gotPitch, gotChord] = lines(pscat(prog));
   assert.deepEqual(gotShift, wantShift);
-  assert.deepEqual(gotPitch, pitches.map((p) => movePitch({ step: p.step, oct: p.oct, alter: p.alter }, p.s, p.df, p.respell)));
-  assert.deepEqual(gotChord, chords.map((c) => dfs.map((d) => transposeChord(c, d))));
+  assert.equal(gotPitch.length, REF.pitches.count);
+  assert.equal(refHash(gotPitch), REF.pitches.sha, 'sm-transpose-pitch differs from movePitch');
+  assert.equal(refHash(gotChord), REF.chords.sha, 'sm-transpose-chord differs from transposeChord');
+  assert.equal(gotShift[2 + 12][0 + 7], 2); // C major up a tone: D
+  assert.equal(gotShift[1 + 12][0 + 7], -5); // up a semitone: Db (5 flats), not C# (7 sharps)
   assert.equal(gotChord[0][2 + 12], 'Bm7');
   assert.equal(gotChord[9][2 + 12], 'A#m7/Eb'); // the signs come back as # and b
 });
 
 test('sm-abc-tune-transpose reads %%transpose like tuneTranspose', { skip }, () => {
-  const tune = (n, extra = '') => `X:${n}\nT:T${n}\n${extra}K:C\nCDEF|\n`;
-  const cases = [
-    tune(1, '%%transpose -2\n'),
-    '%%transpose 5\n\n' + tune(1) + tune(2, '%%transpose 3\n'),
-    '%%transpose 5\n\n' + tune(1, '%%transpose 0\n'), // 0 in the tune: the header's counts
-    '  %%transpose\t+7 semitones\n' + tune(1),
-    '<!-- %%transpose -4 -->\n' + tune(1),
-    '%%transposex 3\n%%transpose x\n%%transpose 9\n' + tune(1), // the first line that matches
-    '%%transpose 2\nT:No X line\nK:G\nGABc|\n',
-    'T:none\nK:C\nC|\n',
-    tune(1, '%%transpose 4\n').replace(/\n/g, '\r\n'),
-    '%%transpose -1\r' + tune(1).replace(/\n/g, '\r'),
-    tune(1) + 'w: %%transpose 6 is not at the line start\n',
-    '',
-  ];
-  const calls = [];
-  const want = [];
-  for (const src of cases) {
-    for (let t = 0; t < Math.max(1, splitTunes(src).length) + 1; t++) {
-      calls.push(`${psLiteral(src)} ${t} sm-abc-tune-transpose`);
-      want.push(tuneTranspose(src, splitTunes(src)[t] || '', 'abc'));
-    }
-  }
-  const [got] = lines(pscat(`${PARSE}\n[ ${calls.join('\n')} ] sm-abc-json (\\n) print`));
-  assert.deepEqual(got, want);
-  assert.ok(want.filter((v) => v !== 0).length >= 8);
-  // and selfContainedPS (what it reports, the PDF's Subject) agrees with tuneTranspose
-  assert.equal(selfContainedPS(cases[1], { engraveLib: ENGRAVE, abcLib: ABC, tune: 1 }).transposed.semis, 3);
-  assert.equal(selfContainedPS(cases[2], { engraveLib: ENGRAVE, abcLib: ABC }).transposed.semis, 5);
+  // the cases: the tune's line, else the file header's; 0 in the tune lets
+  // the header's count; the first line that matches; CRLF and CR; not
+  // mid-line; a MusicXML comment; no X: line; empty text
+  const cases = REF.tuneTranspose;
+  const [got] = lines(pscat(`${PARSE}\n[ ${cases.map((c) => `${psLiteral(c.src)} ${c.tune} sm-abc-tune-transpose`).join('\n')} ] sm-abc-json (\\n) print`));
+  assert.deepEqual(got, cases.map((c) => c.semis));
+  assert.ok(cases.filter((c) => c.semis !== 0).length >= 8);
+  // and what sheet reports (sm-score-meta, the PDF's Subject) agrees
+  const two = cases.find((c) => c.src.startsWith('%%transpose 5\n\nX:1') && c.src.includes('X:2')).src;
+  assert.equal(psMeta(two, { tune: 1 }).transposed.semis, 3);
+  assert.equal(psMeta(cases.find((c) => c.src.includes('%%transpose 0')).src).transposed.semis, 5);
 });
 
 test('every name sm_transpose.ps defines, temporaries included, starts with sm-', { skip }, () => {
@@ -151,7 +119,7 @@ test('every name sm_transpose.ps defines, temporaries included, starts with sm-'
 ${PARSE}
 /sm-t-before2 userdict length dict def userdict { pop sm-t-before2 exch true put } forall
 ${TRANSPOSE}
-${psLiteral(CORNERS)} sm-abc-parse 7 sm-score-transpose pop (Bb/D A#) 3 sm-transpose-chord pop
+${psLiteral(read(CORNERS))} sm-abc-parse 7 sm-score-transpose pop (Bb/D A#) 3 sm-transpose-chord pop
 userdict { pop dup sm-t-before2 exch known { pop } { 64 string cvs print ( ) print } ifelse } forall
 sm-tr-dict { pop 64 string cvs print ( ) print } forall (\\n) print`;
   const names = pscat(prog).trim().split(/\s+/);
@@ -205,7 +173,7 @@ test('headless: (samples/X.abc) << /transpose 2 >> sm-abc-engrave-file draws the
 
 // the self-contained --engine ps document, written to tmp
 function writeDoc(src, opts) {
-  const { ps } = selfContainedPS(src, { engraveLib: ENGRAVE, abcLib: ABC, parseLib: PARSE, transposeLib: TRANSPOSE, ...opts });
+  const { ps } = psEngineDoc(src, opts);
   const file = path.join(tmp, `doc${++runs}.ps`);
   writeFileSync(file, ps);
   return file;
@@ -228,14 +196,14 @@ test('--engine ps --transpose: exactly the PostScript engraving of the JS-transp
     // A: what sheet --engine ps --transpose k writes: PostScript parses and transposes
     const pa = path.join(tmp, `a${++runs}.pdf`);
     execFileSync(process.execPath, [path.join(root, 'bin/sheet.mjs'), f, '--engine', 'ps', '--transpose', String(k), '--no-source', '-o', pa], { cwd: root, stdio: 'pipe' });
-    // B: the same document with no parser, the JS-transposed Score embedded, no PS transposition
-    const score = parse(src).scores[0];
-    transposeScore(score, k);
-    const plain = selfContainedPS(src, { engraveLib: ENGRAVE, abcLib: ABC });
-    const lit = `/sm-abc-score ${psLiteral(parse(src).scores[0])} def`;
-    assert.ok(plain.ps.includes(lit));
+    // B: the untransposed document, drawing the JS-transposed Score instead of parsing
+    const score = REF.engraved[`${f} ${k}`];
+    assert.equal(score.transposed.semis, k);
+    const plain = psEngineDoc(src);
+    const call = /^sm-abc-source sm-abc-options sm-(abc|musicxml)-engrave-string$/m;
+    assert.match(plain.ps, call);
     const docB = path.join(tmp, `b${runs}.ps`);
-    writeFileSync(docB, plain.ps.replace(lit, `/sm-abc-score ${psLiteral(score)} def`));
+    writeFileSync(docB, plain.ps.replace(call, `${psLiteral(score)} sm-abc-options sm-abc-engrave`));
     const page = `${Math.round(plain.size[0])}x${Math.round(plain.size[1])}`;
     const pb = docB.replace(/ps$/, 'pdf');
     execFileSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', pb, docB], { stdio: 'pipe' });
@@ -245,16 +213,22 @@ test('--engine ps --transpose: exactly the PostScript engraving of the JS-transp
 
 test('%%transpose in the source and the option add up on the PostScript path; the result reports it', { skip }, async () => {
   const src = read('samples/twinkle.abc').replace(/^K:/m, '%%transpose -3\nK:');
-  const r = selfContainedPS(src, { engraveLib: ENGRAVE, abcLib: ABC, parseLib: PARSE, transposeLib: TRANSPOSE, transpose: 5 });
-  assert.deepEqual(r.transposed, transposeScore(parse(src).scores[0], 2).transposed); // -3 + 5
+  const r = psEngineDoc(src, { transpose: 5 });
+  // -3 + 5: what the JS gave twinkle at +2
+  assert.deepEqual(r.transposed, reference('meta').meta.find((m) => m.file === 'samples/twinkle.abc' && m.transpose === 2).meta.transposed);
   assert.equal(r.transposed.semis, 2);
   assert.deepEqual(r.warnings, []);
-  // PS (parser + directive) and the fallback (embedded literal + total) give the same PDF
+  // PS (parser + directive) and the retired fallback (the JS Score literal +
+  // the total) give the same PDF; the directive line leaves the Score as twinkle's
+  const twinkle = reference('abc-parse').scores['samples/twinkle.abc'].scores[0];
+  assert.deepEqual(lines(pscat(`${PARSE}\n${psLiteral(src)} sm-abc-parse sm-abc-json (\\n) print`))[0], twinkle);
+  const call = 'sm-abc-source sm-abc-options sm-abc-engrave-string\n';
+  assert.ok(r.ps.includes(call));
   const page = '612x792';
   const run = (ps) => { const f = path.join(tmp, `d${++runs}.ps`); writeFileSync(f, ps); execFileSync(PSCAT, ['--lint-strict', '--page', page, '--pdf', f + '.pdf', f], { stdio: 'pipe' }); return readFileSync(f + '.pdf'); };
   const viaParser = run(r.ps);
-  const viaLiteral = run(selfContainedPS(src, { engraveLib: ENGRAVE, abcLib: ABC, transposeLib: TRANSPOSE, transpose: 5 }).ps);
-  const twinkleUp2 = run(selfContainedPS(read('samples/twinkle.abc'), { engraveLib: ENGRAVE, abcLib: ABC, parseLib: PARSE, transposeLib: TRANSPOSE, transpose: 2 }).ps);
+  const viaLiteral = run(r.ps.replace(call, `${psLiteral(twinkle)} sm-abc-options dup length 1 add dict copy dup /transpose 2 put sm-abc-engrave\n`));
+  const twinkleUp2 = run(psEngineDoc(read('samples/twinkle.abc'), { transpose: 2 }).ps);
   assert.ok(viaParser.equals(viaLiteral), 'parser path and literal path differ');
   assert.ok(viaParser.equals(twinkleUp2), '%%transpose -3 plus 5 is not +2');
   // the WebAssembly build (no file system: the libraries are all in the file) agrees

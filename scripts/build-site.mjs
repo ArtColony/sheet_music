@@ -14,8 +14,9 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSy
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { parse, finishPDF, parseAnnotations, VERSION } from '../src/index.js';
-import { psEngineDoc, pdfPages, psWarnings, ABC_LIB, PARSE_LIB, TRANSPOSE_LIB, PERFORM_LIB, MUSICXML_LIB } from '../bin/sheet.mjs';
+import { finishPDF, VERSION } from '../src/index.js';
+import { psLiteral } from '../src/ps.js';
+import { psEngineDoc, pdfPages, psWarnings, runPrinting, ABC_LIB, PARSE_LIB, TRANSPOSE_LIB, PERFORM_LIB, MUSICXML_LIB } from '../bin/sheet.mjs';
 import { mdToHtml } from './md.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,13 +36,18 @@ mkdirSync(path.join(dist, 'engine'), { recursive: true });
 
 // ------------------------------------------------------------ samples
 const order = JSON.parse(readFileSync(path.join(root, 'samples/order.json'), 'utf8'));
+// each sample's first Score, as PostScript parses it (lib/sm_abc_parse.ps,
+// lib/sm_musicxml.ps), printed as JSON: for the gallery's feature tags
+const parsed = runPrinting([PARSE_LIB, MUSICXML_LIB, ...order.map((f) => `${psLiteral(readFileSync(path.join(root, 'samples', f), 'utf8'))} ${f.endsWith('.musicxml') ? 'sm-musicxml-parse' : 'sm-abc-parse'} sm-abc-json (\n) print`)].join('\n') + '\n')
+  .split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
+if (parsed.length !== order.length) throw Error('PostScript did not parse every sample');
 const samples = [];
-for (const file of order) {
+for (const [i, file] of order.entries()) {
   const text = readFileSync(path.join(root, 'samples', file), 'utf8');
   const base = file.replace(/\.[^.]+$/, '');
   // the self-contained document `sheet` writes: pscat parses, lays out and draws
   const r = psEngineDoc(text);
-  const score = parse(text).scores[0];
+  const score = parsed[i];
   writeFileSync(path.join(dist, 'samples', base + '.ps'), r.ps);
   copyFileSync(path.join(root, 'samples', file), path.join(dist, 'samples', file));
   const page = `${Math.round(r.size[0])}x${Math.round(r.size[1])}`;
@@ -56,8 +62,8 @@ for (const file of order) {
   samples.push({
     file, base, text, title: r.title, pages, pngs,
     format: r.format === 'musicxml' ? 'MusicXML' : 'ABC',
-    composer: score.meta.composer || score.meta.origin || '',
-    notes: [...features(score), ...(parseAnnotations(text).length ? ['annotations'] : [])],
+    composer: r.composer || score.meta.origin || '',
+    notes: [...features(score), ...(r.annotations.length ? ['annotations'] : [])],
     psSha: sha(r.ps), pdfSha: sha(readFileSync(path.join(dist, 'samples', base + '.pdf'))),
   });
 }

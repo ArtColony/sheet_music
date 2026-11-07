@@ -1,64 +1,63 @@
 // Transposition, playback (performance + MIDI) and the source carried in PDFs.
+// The notes and the transposition come from PostScript (lib/sm_perform.ps,
+// lib/sm_transpose.ps); JavaScript writes the MIDI file and the PDF.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { parse, performanceOf, midiFile, playOrder, transposeChord, fifthsShift, embedSource, extractSource } from '../src/index.js';
-import { selfContainedPS } from '../src/psdoc.js';
+import { midiFile, embedSource, extractSource } from '../src/index.js';
 import { pdfString } from '../src/pdfmeta.js';
+import { psMeta } from '../bin/sheet.mjs';
+import { psValues, psPerformances, noPscat as skip } from './pscat-run.mjs';
+import { psLiteral } from '../src/ps.js';
 
-const lib = (f) => readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8');
-const libs = { engraveLib: lib('sm_engrave.ps'), abcLib: lib('sm_abc.ps') };
 const tune = (body, k = 'C') => `X:1\nT:t\nM:4/4\nL:1/4\nK:${k}\n${body}\n`;
-const pitches = (src, transpose = 0) => performanceOf(src, { transpose }).notes.map((n) => n.midi);
+const performance = (src, opts = {}) => psPerformances([[src, opts]])[0];
+// the sounding MIDI numbers of each [text, transpose], in one pscat run
+const pitchesOf = (cases) => psPerformances(cases.map(([src, transpose = 0]) => [src, { transpose }])).map((p) => p.notes.map((n) => n.midi));
+const pitches = (src, transpose = 0) => pitchesOf([[src, transpose]])[0];
 
-test('transpose picks the key with fewest accidentals and spells by it', () => {
-  assert.equal(fifthsShift(2, -1), 2);   // F major up a tone: G major
-  assert.equal(fifthsShift(1, 0), -5);   // C up a semitone: Db (5 flats), not C# (7 sharps)
-  assert.equal(fifthsShift(-2, 0), -2);  // down a tone: Bb
-  const s = parse(tune('F G ^G A |')).scores[0];
-  const r = selfContainedPS(tune('F G ^G A |'), { ...libs, transpose: 2 });
-  assert.equal(r.transposed.key, 'D');
-  assert.ok(s);
+test('transpose picks the key with fewest accidentals and spells by it', { skip }, () => {
+  // F major up a tone: G major; C up a semitone: Db (5 flats), not C# (7 sharps); down a tone: Bb
+  assert.deepEqual(psValues(['2 -1 sm-transpose-fifths-shift', '1 0 sm-transpose-fifths-shift', '-2 0 sm-transpose-fifths-shift']), [2, -5, -2]);
+  assert.equal(psMeta(tune('F G ^G A |'), { transpose: 2 }).transposed.key, 'D');
 });
 
-test('transposed notes sound the interval, accidentals included', () => {
+test('transposed notes sound the interval, accidentals included', { skip }, () => {
   const src = tune('C ^F =B _E | ^G2 G2 |');
-  const base = pitches(src);
-  for (const k of [1, 2, -3, 5, 7, -12, 11]) assert.deepEqual(pitches(src, k), base.map((m) => m + k), `transpose ${k}`);
   const src2 = tune('B, ^C D E | F G A B |', 'D');
-  for (const k of [1, -1, 6, -6]) assert.deepEqual(pitches(src2, k), pitches(src2).map((m) => m + k), `D major ${k}`);
+  const ks = [1, 2, -3, 5, 7, -12, 11], ks2 = [1, -1, 6, -6];
+  const [base, ...rest] = pitchesOf([[src], ...ks.map((k) => [src, k])]);
+  ks.forEach((k, i) => assert.deepEqual(rest[i], base.map((m) => m + k), `transpose ${k}`));
+  const [base2, ...rest2] = pitchesOf([[src2], ...ks2.map((k) => [src2, k])]);
+  ks2.forEach((k, i) => assert.deepEqual(rest2[i], base2.map((m) => m + k), `D major ${k}`));
 });
 
-test('%%transpose in the source adds to the option', () => {
+test('%%transpose in the source adds to the option', { skip }, () => {
   const src = tune('C D E F |').replace('K:C', '%%transpose -2\nK:C');
-  assert.deepEqual(pitches('%%transpose -2\n\n' + tune('C D E F |')), [58, 60, 62, 63]); // file header
-  assert.deepEqual(pitches(src), [58, 60, 62, 63]);
-  assert.deepEqual(pitches(src, 2), [60, 62, 64, 65]);
+  assert.deepEqual(pitchesOf([['%%transpose -2\n\n' + tune('C D E F |')], [src], [src, 2]]), [[58, 60, 62, 63], [58, 60, 62, 63], [60, 62, 64, 65]]); // file header, tune, plus the option
 });
 
-test('chord symbols move with the music', () => {
-  assert.equal(transposeChord('Am7', 2), 'Bm7');
-  assert.equal(transposeChord('Bb/D', 2), 'C/E');
-  assert.equal(transposeChord('F#m', -5), 'Gm'); // df is in fifths: -5 = up a semitone
-  assert.equal(transposeChord('Eb', 7), 'E');
-  assert.equal(transposeChord('N.C.', 2), 'N.C.');
+test('chord symbols move with the music', { skip }, () => {
+  // df is in fifths: -5 = up a semitone
+  const cases = [['Am7', 2, 'Bm7'], ['Bb/D', 2, 'C/E'], ['F#m', -5, 'Gm'], ['Eb', 7, 'E'], ['N.C.', 2, 'N.C.']];
+  assert.deepEqual(psValues(cases.map(([c, df]) => `${psLiteral(c)} ${df} sm-transpose-chord`)), cases.map((c) => c[2]));
 });
 
-test('performance: key signature, accidentals through the bar, ties over the bar line', () => {
-  assert.deepEqual(pitches(tune('F ^F F =F |', 'G')), [66, 66, 66, 65]);
+test('performance: key signature, accidentals through the bar, ties over the bar line', { skip }, () => {
+  const [a, b] = psPerformances([[tune('F ^F F =F |', 'G')], [tune('A2 z ^C- | C C z2 |')]]);
+  assert.deepEqual(a.notes.map((n) => n.midi), [66, 66, 66, 65]);
   // ^C tied over the bar keeps its sharp; the next C in that bar is natural
-  const p = performanceOf(tune('A2 z ^C- | C C z2 |')).notes.map((n) => [n.midi, n.dur[0] / n.dur[1]]);
-  assert.deepEqual(p, [[69, 0.5], [61, 0.5], [60, 0.25]]);
+  assert.deepEqual(b.notes.map((n) => [n.midi, n.dur[0] / n.dur[1]]), [[69, 0.5], [61, 0.5], [60, 0.25]]);
 });
 
-test('repeats and endings are played out', () => {
-  const s = parse(tune('|: C D E F |1 G4 :|2 c4 |]')).scores[0];
-  assert.deepEqual(playOrder(s.measures), [0, 1, 0, 2]);
-  assert.equal(performanceOf(tune('|: C D E F |1 G4 :|2 c4 |]')).notes.length, 10);
+test('repeats and endings are played out', { skip }, () => {
+  // bars 1, 2 (first ending), 1 again, 3 (second ending)
+  const p = performance(tune('|: C D E F |1 G4 :|2 c4 |]'));
+  assert.deepEqual(p.notes.map((n) => n.midi), [60, 62, 64, 65, 67, 60, 62, 64, 65, 72]);
+  assert.deepEqual(p.notes.map((n) => n.at[0] / n.at[1]), [0, 0.25, 0.5, 0.75, 1, 2, 2.25, 2.5, 2.75, 3]);
 });
 
-test('MIDI file: header, tracks, tempo', () => {
-  const perf = performanceOf(tune('C D E F |').replace('L:1/4', 'L:1/4\nQ:1/4=120'));
+test('MIDI file: header, tracks, tempo', { skip }, () => {
+  const perf = performance(tune('C D E F |').replace('L:1/4', 'L:1/4\nQ:1/4=120'));
   const m = midiFile(perf, { title: 't' });
   assert.equal(String.fromCharCode(...m.slice(0, 4)), 'MThd');
   assert.equal(m[9], 1);  // format 1

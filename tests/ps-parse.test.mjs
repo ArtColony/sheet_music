@@ -1,8 +1,9 @@
 // The PostScript ABC parser (lib/sm_abc_parse.ps) must build exactly the
-// Score the JS parser builds: for every ABC sample (and an edge-case
-// fixture), pscat runs sm-abc-parse-all, prints the result with sm-abc-json,
-// and it must deep-equal parse(src) from src/index.js, warnings included.
-// Fracs are [num den] on both sides; JS undefined members are absent.
+// Score the retired JS parser (src/abc.js) built: for every ABC sample (and
+// an edge-case fixture), pscat runs sm-abc-parse-all, prints the result with
+// sm-abc-json, and it must deep-equal the frozen reference
+// (tests/fixtures/reference/abc-parse.json), warnings included. Fracs are
+// [num den]; members the JS left undefined are absent.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -10,9 +11,8 @@ import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync, writeFileSy
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, parseAnnotations } from '../src/index.js';
-import { splitTunes } from '../src/abc.js';
-import { psLiteral, num } from '../src/ps.js';
+import { psLiteral } from '../src/ps.js';
+import { reference } from './reference.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
@@ -42,16 +42,14 @@ function runPS(call) {
   const out = pscat(prog);
   return JSON.parse(out.split('\n')[0]);
 }
-const expected = (src) => {
-  const { scores, warnings } = parse(src, { format: 'abc' });
-  return JSON.parse(JSON.stringify({ scores, warnings }));
-};
+const REF = reference('abc-parse');
+const expected = (key) => { assert.ok(REF.scores[key], `no reference for ${key}`); return REF.scores[key]; };
 
 for (const file of files) {
   const name = path.relative(root, file);
-  test(`${name}: sm-abc-parse equals the JS parser`, { skip }, () => {
+  test(`${name}: sm-abc-parse equals the JS parser's Score`, { skip }, () => {
     const src = readFileSync(file, 'utf8');
-    const want = expected(src);
+    const want = expected(name);
     assert.deepEqual(runPS(`${psLiteral(src)} sm-abc-parse-all`), want);
     if (name.startsWith('samples/')) assert.deepEqual(want.warnings, []);
   });
@@ -59,7 +57,7 @@ for (const file of files) {
 
 test('sm-abc-parse-file and sm-abc-parse give the first tune', { skip }, () => {
   const file = path.join(root, 'tests/fixtures/parse-edge.abc');
-  const want = expected(readFileSync(file, 'utf8'));
+  const want = expected('tests/fixtures/parse-edge.abc');
   const got = runPS(`${psLiteral(file)} sm-abc-parse-file 1 array astore`);
   assert.deepEqual(got.scores, want.scores.slice(0, 1));
   assert.deepEqual(got.warnings, want.warnings);
@@ -70,19 +68,17 @@ test('sm-abc-parse-file and sm-abc-parse give the first tune', { skip }, () => {
 test('loaded inside another dict, no X: line, empty text', { skip }, () => {
   const src = 'T:Bare\nK:G\nGAB c2 |';
   const got = runPS(`10 dict begin ${LIB}\nend ${psLiteral(src)} sm-abc-parse-all () sm-abc-parse 2 array astore`);
-  assert.deepEqual(got.scores, [expected(src).scores, expected('').scores[0]]);
+  assert.deepEqual(got.scores, [expected('bare').scores, expected('empty').scores[0]]);
   assert.deepEqual(got.warnings, []);
 });
 
-test('sm-abc-annotations gives what src/psdoc.js passes the layout', { skip }, () => {
-  // psdoc maps parseAnnotations of the tune's text to these fields and
-  // writes them with psLiteral, so non-integers arrive with two decimals
-  const lit = (v) => (typeof v === 'number' && !Number.isInteger(v) ? parseFloat(num(v)) : Array.isArray(v) ? v.map(lit) : v);
+test('sm-abc-annotations gives what the JS annotation reader gave the layout', { skip }, () => {
+  // src/psdoc.js once mapped parseAnnotations of the tune's text to these
+  // fields and wrote them with psLiteral (non-integers with two decimals)
   for (const file of ['samples/mountain-king.abc', 'tests/fixtures/parse-edge.abc']) {
     const src = readFileSync(path.join(root, file), 'utf8');
-    const tunes = splitTunes(src);
-    const want = tunes.map((t) => parseAnnotations(t).map((a) => Object.fromEntries(['page', 'type', 'x', 'y', 'w', 'h', 'rgb', 'text'].map((k) => [k, lit(a[k])]))));
-    const call = `[ 0 1 ${tunes.length - 1} { ${psLiteral(src)} exch sm-abc-annotations } for ]`;
+    const want = REF.annotations[file];
+    const call = `[ 0 1 ${want.length - 1} { ${psLiteral(src)} exch sm-abc-annotations } for ]`;
     const got = runPS(call).scores;
     assert.deepEqual(got, want, file);
     assert.ok(want.flat().length >= 4, file);
@@ -91,7 +87,7 @@ test('sm-abc-annotations gives what src/psdoc.js passes the layout', { skip }, (
 
 test('CRLF line ends parse like LF', { skip }, () => {
   const src = readFileSync(path.join(root, 'samples/amazing-grace.abc'), 'utf8').replace(/\n/g, '\r\n');
-  assert.deepEqual(runPS(`${psLiteral(src)} sm-abc-parse-all`), expected(src));
+  assert.deepEqual(runPS(`${psLiteral(src)} sm-abc-parse-all`), expected('samples/amazing-grace.abc'));
 });
 
 test('every name it defines, temporaries included, starts with sm-', { skip }, () => {

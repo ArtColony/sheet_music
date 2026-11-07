@@ -2,17 +2,17 @@
   "pscat": "0.7.0-rc.4",
   "psEngine": {
     "ps": {
-      "amazing-grace.abc": "7f14cad828188762de12eda3ca70c03a372af34230ac4cbcb2116afc56114c95",
-      "camptown-races.abc": "9b169ae902a7fa4315a3af55dadc20bdf322599000b1ecefbbebe0774272d370",
-      "drunken-sailor.abc": "22bf8e5495ab14968bb306c002ee34ada14a5de891c6660e513cbef73367e937",
-      "feature-tour.abc": "17a2e2f8a27dee23e00d2e8b30b0179a24bbbe0eb2cba6568acb6fe127e5297b",
-      "frere-jacques.musicxml": "0878154e8cd076eb891ffb3b03bb92f6569cbed175edbebeaf97b1ad11a42784",
-      "greensleeves.abc": "4a047e056efd829f01dda4677813c5db8049349d39ab5d58a06e6c056542df8a",
-      "mountain-king.abc": "cb71f27a07fe110c68b520b4f009868cc75fe586bccfe533e7be8a86b64899a3",
-      "ode-to-joy.abc": "59ef9ca4e948e659e2e681120cd2bafcde8c5c562b69a8d307f540f07edaf9cb",
-      "twinkle.abc": "545007bf5ef91304e180e51bb01f69f78a7b3ae21630eaab0b9bf3e6b378d986",
-      "fixtures/parse-edge.abc": "9db4178dca963bbaa57721e8dab7a06b030d0842c781ecaf7bb315ffc3501fb2",
-      "fixtures/parse-edge.musicxml": "649b76c3c00e3e72543f1a9cac0da25e8d4b3c3ffc679cdd50aa6437733b76e3"
+      "amazing-grace.abc": "16c45b9980b7204203a7f36123ec9e948371a1f196257166f8477677bc58e79c",
+      "camptown-races.abc": "d79cd7bebe8b92b9d5afd6c29e21ff1919ac6aa241149d7ec916d9910c7a724b",
+      "drunken-sailor.abc": "ffbcdc544f18ac8e72434a3e0b33173b1cc734dec268994a8d70406329b14df5",
+      "feature-tour.abc": "7618814ff5482f974bf35802795647aeca31971459edbdfd75423266d5dfe9be",
+      "frere-jacques.musicxml": "856e40cfb8405d44ef0c9d825d075ff2af4a660b98ebb66530861f0a8d416de8",
+      "greensleeves.abc": "2f94b83270f46eb9b04fc47bd7354249042e98189f204980ed407722db3d8f75",
+      "mountain-king.abc": "c8cb16070dc70ba19cefb635f5805505aaff81d158ee1b36a8e27bdfd72a41a8",
+      "ode-to-joy.abc": "abcd007cbeb2fff0c2281c73c80e82f7c1ea73c8c97b9306786442745aaabd5e",
+      "twinkle.abc": "3ee69321e2705701a8bdae28715e10147cdf34575bfea6d353380770809bb472",
+      "fixtures/parse-edge.abc": "d18f5bc02171a740e6ebe5feea1d1606a46c08bc7e45c7377f6908608451d88a",
+      "fixtures/parse-edge.musicxml": "243a9d56aa19c757f3e19b6ebdab9ecf94c6097020e536d4764b4395bd0415e9"
     },
     "pdf": {
       "darwin-arm64": {

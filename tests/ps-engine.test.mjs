@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { selfContainedPS, END_MARK } from '../src/psdoc.js';
 import { psEngineDoc, psWarnings } from '../bin/sheet.mjs';
 import { GOLDEN_FILES } from '../scripts/golden-files.mjs';
+import { psLiteral } from '../src/ps.js';
+import { reference } from './reference.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const engraveLib = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
@@ -28,8 +30,6 @@ const golden = JSON.parse(readFileSync(path.join(root, 'tests/golden.json'), 'ut
 const PSCAT = process.env.PSCAT || path.join(root, 'vendor/pscat/pscat');
 const PLATFORM = `${process.platform}-${process.arch}`;
 const pages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
-// a bare document (engraver + layout, the JS Score embedded), and the default one
-const doc = (src, extra = {}) => selfContainedPS(src, { engraveLib, abcLib, ...extra });
 const full = (src) => psEngineDoc(src);
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-psengine-'));
@@ -56,9 +56,11 @@ test('the driver hands the embedded source to sm-abc-parse when it is defined', 
   const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
   const r = await createRenderer();
   const src = readFileSync(path.join(root, 'samples/twinkle.abc'), 'utf8');
-  // a stub parser: prints the text it was given, returns the JS Score
-  const stub = '/sm-abc-parse { (<<) print print (>>) print sm-abc-score } def';
-  const out = r.render(doc(src, { parseLib: stub }).ps, { width: 612, height: 792 }).output;
+  // a stub parser: prints the text it was given, returns the JS parser's Score
+  const score = reference('abc-parse').scores['samples/twinkle.abc'].scores[0];
+  const meta = reference('meta').meta.find((m) => m.file === 'samples/twinkle.abc' && m.transpose === 0).meta;
+  const stub = `/sm-abc-parse { (<<) print print (>>) print ${psLiteral(score)} } def`;
+  const out = r.render(selfContainedPS(src, { engraveLib, abcLib, parseLib: stub, meta }).ps, { width: 612, height: 792 }).output;
   assert.equal(out, `<<${src.trimEnd()}\n>>`);
 });
 
@@ -75,7 +77,7 @@ test('PostScript engraver: CLI and WebAssembly agree, PDFs reproduce, goldens ma
     const printed = run(base + '.1.pdf');
     run(base + '.2.pdf');
     // the samples engrave with no warning: none printed by the PostScript
-    // parser and engraver, none from the JS parse (shown for MusicXML)
+    // parser and engraver, none in the metadata (sm-score-meta)
     if (sample) assert.deepEqual([...psWarnings(printed), ...warnings], [], `${f}: warnings`);
     const p1 = readFileSync(base + '.1.pdf');
     assert.ok(p1.equals(readFileSync(base + '.2.pdf')), `${f}: CLI PDF differs between runs`);

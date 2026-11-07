@@ -13,9 +13,9 @@
 // The engraver is the PostScript library (lib/sm_abc.ps and friends): the
 // output .ps carries it, a short driver and the source itself, and pscat
 // parses (ABC, and MusicXML with lib/sm_musicxml.ps), lays out and draws the
-// score. The JS parser's Score literal is embedded only when no PostScript
-// parser is available. (The JavaScript layout, src/layout.js, and its
-// --engine js / js-wasm were retired in #10.)
+// score. (The JavaScript layout, src/layout.js, with its --engine js /
+// js-wasm, and the JavaScript parsers, src/abc.js and src/musicxml.js, were
+// retired in #10.)
 //
 // PDFs carry their source as an attachment (src/pdfmeta.js), so a PDF made
 // here is also an input: it is read back and engraved again (or, with an
@@ -32,17 +32,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { finishPDF, extractSource, isPDF, detectFormat, midiFile } from '../src/index.js';
+import { finishPDF, extractSource, isPDF, midiFile } from '../src/index.js';
 import { selfContainedPS, metaPS, readMeta } from '../src/psdoc.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const LIB = readFileSync(path.join(root, 'lib/sm_engrave.ps'), 'utf8');
 export const ABC_LIB = readFileSync(path.join(root, 'lib/sm_abc.ps'), 'utf8');
-const optional = (f) => (existsSync(path.join(root, 'lib', f)) ? readFileSync(path.join(root, 'lib', f), 'utf8') : null);
-export const PARSE_LIB = optional('sm_abc_parse.ps');
-export const TRANSPOSE_LIB = optional('sm_transpose.ps');
-export const PERFORM_LIB = optional('sm_perform.ps');
-export const MUSICXML_LIB = optional('sm_musicxml.ps');
+export const PARSE_LIB = readFileSync(path.join(root, 'lib/sm_abc_parse.ps'), 'utf8');
+export const TRANSPOSE_LIB = readFileSync(path.join(root, 'lib/sm_transpose.ps'), 'utf8');
+export const PERFORM_LIB = readFileSync(path.join(root, 'lib/sm_perform.ps'), 'utf8');
+export const MUSICXML_LIB = readFileSync(path.join(root, 'lib/sm_musicxml.ps'), 'utf8');
 
 /**
  * Run a PostScript program that only prints (it draws nothing) and return
@@ -63,25 +62,20 @@ export function runPrinting(ps, run) {
  * and the warnings, for options tune / transpose / format. run as for runPrinting.
  */
 export function psMeta(src, opts = {}, run) {
-  if (!PARSE_LIB) throw Error('lib/sm_abc_parse.ps is missing');
   return readMeta(runPrinting(metaPS(src, { ...opts, abcLib: ABC_LIB, parseLib: PARSE_LIB, transposeLib: TRANSPOSE_LIB, musicxmlLib: MUSICXML_LIB }), run));
 }
 
 /**
  * The self-contained PostScript-engraver document for src (src/psdoc.js):
- * what `sheet` writes and renders by default. ABC is parsed by PostScript;
- * MusicXML too (lib/sm_musicxml.ps), and the document's metadata comes from
- * a first PostScript run (psMeta; opts.meta when the caller has it, opts.run
- * to run it in the wasm build). The JS parser's Score (and metadata) is
- * embedded only when no PostScript parser is available (or with noParser).
+ * what `sheet` writes and renders by default. PostScript parses the ABC or
+ * MusicXML (lib/sm_abc_parse.ps, lib/sm_musicxml.ps), and the document's
+ * metadata comes from a first PostScript run (psMeta; opts.meta when the
+ * caller has it, opts.run to run it in the wasm build). A perform document
+ * (opts.perform) needs no metadata.
  */
 export function psEngineDoc(src, opts = {}) {
-  const parseLib = opts.noParser ? null : PARSE_LIB;
-  const musicxmlLib = opts.noParser ? null : MUSICXML_LIB;
-  const format = opts.format || detectFormat(src);
-  const embedScore = opts.embedScore ?? (!parseLib || (format !== 'abc' && !(format === 'musicxml' && musicxmlLib)));
-  const meta = opts.meta || (embedScore || opts.perform ? null : psMeta(src, opts, opts.run));
-  return selfContainedPS(src, { ...opts, meta, embedScore, engraveLib: LIB, abcLib: ABC_LIB, parseLib, transposeLib: TRANSPOSE_LIB, performLib: PERFORM_LIB, musicxmlLib });
+  const meta = opts.meta || (opts.perform ? null : psMeta(src, opts, opts.run));
+  return selfContainedPS(src, { ...opts, meta, engraveLib: LIB, abcLib: ABC_LIB, parseLib: PARSE_LIB, transposeLib: TRANSPOSE_LIB, performLib: PERFORM_LIB, musicxmlLib: MUSICXML_LIB });
 }
 /** The performance JSON line a perform document printed (sm-abc-performance). */
 export function performanceFromOutput(out) {

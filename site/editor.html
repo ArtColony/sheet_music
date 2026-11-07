@@ -201,12 +201,12 @@ function opts() {
   return { transpose: parseInt(els.transpose.value, 10) || 0, paper: els.paper.value, sp: parseFloat(els.size.value), breaks: els.breaks.value, tune: parseInt(els.tune.value || '0', 10) };
 }
 // The self-contained document for the text: ABC and MusicXML are parsed in
-// PostScript (no Score literal is embedded). perform: print the notes instead.
+// PostScript. perform: print the notes instead (no meta needed).
 // meta: what PostScript knows about the text (metaOf), for the document's
 // header, the tune list, the annotations and the PDF's metadata.
 function documentOf(text, o, perform = false, meta = null) {
   const L = bundle.libs;
-  return psdoc.selfContainedPS(text, { ...o, engraveLib: L.engrave, abcLib: L.abc, parseLib: L.parse, transposeLib: L.transpose, performLib: L.perform, musicxmlLib: L.musicxml, embedScore: false, perform, meta });
+  return psdoc.selfContainedPS(text, { ...o, engraveLib: L.engrave, abcLib: L.abc, parseLib: L.parse, transposeLib: L.transpose, performLib: L.perform, musicxmlLib: L.musicxml, perform, meta });
 }
 // the title, composer, key after transposition, tunes, annotations and
 // warnings, printed by PostScript (lib/sm_abc_parse.ps sm-score-meta)

@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { num, text } from '../src/ps.js';
-import { parseMusicXML, parseXML } from '../src/musicxml.js';
-import { readFileSync } from 'node:fs';
+import { num, text, psLiteral } from '../src/ps.js';
+import { psValues, noPscat as skip } from './pscat-run.mjs';
 
 test('num: two decimals, no trailing zeros, no -0', () => {
   assert.equal(num(0), '0');
@@ -23,8 +22,8 @@ test('text: ASCII, escapes and composed accents', () => {
   assert.equal(text('漢'), '(?)');
 });
 
-test('xml parser: entities, attributes, CDATA, comments, doctype', () => {
-  const d = parseXML('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><!-- c --><a k="1&amp;2"><b>x &lt; y</b><![CDATA[<raw>]]><c/></a>');
+test('xml parser (lib/sm_musicxml.ps): entities, attributes, CDATA, comments, doctype', { skip }, () => {
+  const [d] = psValues([`${psLiteral('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><!-- c --><a k="1&amp;2"><b>x &lt; y</b><![CDATA[<raw>]]><c/></a>')} sm-mxp-dict begin sm-mxp-xml end`]);
   const a = d.children[0];
   assert.equal(a.attrs.k, '1&2');
   assert.equal(a.children[0].text, 'x < y');
@@ -32,8 +31,8 @@ test('xml parser: entities, attributes, CDATA, comments, doctype', () => {
   assert.equal(a.children[1].name, 'c');
 });
 
-test('musicxml sample: lyrics, harmony, beams, tempo, system break', () => {
-  const { score, warnings } = parseMusicXML(readFileSync(new URL('../samples/frere-jacques.musicxml', import.meta.url), 'utf8'));
+test('musicxml sample (sm-musicxml-parse): lyrics, harmony, beams, tempo, system break', { skip }, () => {
+  const [score, warnings] = psValues(['(samples/frere-jacques.musicxml) sm-musicxml-parse-file', 'sm-musicxml-warnings']);
   assert.deepEqual(warnings, []);
   assert.equal(score.meta.title, 'Frère Jacques');
   assert.equal(score.measures.length, 8);
