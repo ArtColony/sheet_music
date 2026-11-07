@@ -29,7 +29,19 @@ const clefMid = (c) => {
 const posOf = (n, clef) => n.oct * 7 + STEPS.indexOf(n.step) - clefMid(clef);
 const keyOffset = (clef) => { let o = 34 - clefMid(clef); o -= 7 * Math.round(o / 7); return o; };
 const beamsOf = (type) => Math.max(0, Math.round(-Math.log2(val(type))) - 2);
-const spaceFor = (t) => 1.0 + 1.45 * Math.log2(1 + 16 * val(t));
+// log2 from + - * / only, in the same operations as lib/sm_abc.ps sm-ae-log2:
+// Math.log2 is not specified to the last bit (engines differ), and a last-bit
+// difference can move a coordinate across a rounding step.
+function log2(x) {
+  let k = 0;
+  while (x >= 2) { x /= 2; k++; }
+  while (x < 1) { x *= 2; k--; }
+  const z = (x - 1) / (x + 1), z2 = z * z;
+  let s = 0, p = z;
+  for (let i = 1; i <= 41; i += 2) { s += p / i; p *= z2; }
+  return s * 2 / 0.6931471805599453 + k;
+}
+const spaceFor = (t) => 1.0 + 1.45 * log2(1 + 16 * val(t));
 
 export function engrave(score, options = {}) {
   const o = { paper: 'letter', sp: 5.5, margin: 50, top: 46, bottom: 44, breaks: 'source', footer: '', ...options };

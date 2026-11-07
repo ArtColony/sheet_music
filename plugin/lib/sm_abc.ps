@@ -540,7 +540,7 @@ sm-ae-dict begin
 /sm-ae-mwidth {
   /sm-ae-mw-first exch def /sm-ae-mw-f exch def /sm-ae-mw-m exch def
   sm-ae-mw-m /sm-pre get sm-ae-mw-m /sm-cols get 0 get /left get add
-  sm-ae-mw-m /sm-cols get { dup /min get exch /ideal get sm-ae-mw-f mul sm-ae-max add } forall
+  0 sm-ae-mw-m /sm-cols get { dup /min get exch /ideal get sm-ae-mw-f mul sm-ae-max add } forall add   % summed as layout.js does
   sm-ae-mw-m /sm-barw get add
   sm-ae-mw-first { sm-ae-mw-m /sm-pc get sub } if
 } bind def
@@ -548,7 +548,7 @@ sm-ae-dict begin
 /sm-ae-headerw { % i -> w
   dup sm-ae-MS exch get /sm-ae-hd-m exch def
   4.4
-  sm-ae-hd-m /sm-key get /fifths get dup abs 3 -1 roll add exch 0 ne { 0.8 add } if
+  sm-ae-hd-m /sm-key get /fifths get dup abs exch 0 ne { 0.8 add } if add   % 4.4 + (|fifths| + 0.8)
   exch 0 eq sm-ae-hd-m /sm-timech get or { sm-ae-hd-m /sm-time get sm-ae-timew 0.8 add add } if
 } bind def
 /sm-ae-linew { % seg f -> w
@@ -807,7 +807,7 @@ sm-ae-dict begin
     sm-ae-systop sm-ae-pg-si sm-ae-pg-y put
     sm-ae-pageof sm-ae-pg-si sm-ae-pg-n put
     /sm-ae-pg-cnt sm-ae-pg-cnt 1 add def
-    /sm-ae-pg-y sm-ae-pg-y sm-ae-pg-h sub 3.2 sm-ae-sp mul sub def
+    /sm-ae-pg-y sm-ae-pg-y sm-ae-pg-h 3.2 sm-ae-sp mul add sub def   % y - (h + gap), as layout.js
   } for
   % words after the tune
   /sm-ae-words sm-ae-S /meta get /words sm-ae-get dup null eq { pop [] } if def
