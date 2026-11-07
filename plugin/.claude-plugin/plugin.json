@@ -1,7 +1,7 @@
 {
   "name": "sheet-music",
   "version": "0.1.0",
-  "description": "Music notation in PostScript: write ABC, engrave it to PDF, PNG or SVG with pscat, transpose it, and draw custom notation with the sm- glyph library. Runs headless; needs the pscat plugin.",
+  "description": "Music notation in PostScript: write ABC, engrave it to PDF, PNG or SVG with pscat, transpose it, draw custom notation with the sm- glyph library, and turn audio or MIDI files into scores (transcription models from Hugging Face). Runs headless; needs the pscat plugin.",
   "author": {
     "name": "ArtColony",
     "url": "https://github.com/ArtColony"
@@ -15,7 +15,8 @@
     "abc",
     "notation",
     "postscript",
-    "pscat"
+    "pscat",
+    "transcription"
   ],
   "dependencies": [
     "pscat@pscat"

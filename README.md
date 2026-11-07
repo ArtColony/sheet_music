@@ -89,6 +89,46 @@ The plugin lives in [`plugin/`](plugin/), with marketplaces in
 [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json).
 See [AGENTS.md](AGENTS.md) for how it is built and tested.
 
+### Audio or MIDI to sheet music
+
+The plugin's **audio-to-sheet-music** skill
+([`plugin/skills/audio-to-sheet-music/`](plugin/skills/audio-to-sheet-music/SKILL.md))
+turns a recording (WAV, MP3, FLAC …) or a MIDI file into a score:
+
+```
+song.mp3 ─ transcribe.py ─▶ song.mid ─ midi2abc.py ─▶ song.abc ─ pscat ─▶ song.pdf
+          (Hugging Face models)     (deterministic, Python standard library)
+```
+
+- **MIDI** needs only `python3`: `python3 plugin/skills/audio-to-sheet-music/scripts/midi2abc.py song.mid -o song.abc`.
+  It quantizes the notes, guesses the meter, pickup and key (options
+  override each), splits them onto a grand staff, and writes ABC that
+  checks clean.
+- **Audio** runs open models from the Hugging Face Hub on your machine:
+  Spotify's Basic Pitch (Apache-2.0, 0.2 MB), optionally Demucs v4 to separate
+  the voice from the band (MIT, 84 MB) or ByteDance's piano transcription
+  model (CC-BY-4.0, 172 MB). Each is pinned to a Hub commit and a SHA-256.
+  Set up once in a virtual environment (about 300 MB, or 1.3 GB with Demucs
+  or the piano model), then check every step:
+
+  ```sh
+  sh plugin/skills/audio-to-sheet-music/scripts/setup.sh ~/.cache/sheet-music/transcribe-venv   # --with-separation, --with-piano
+  ~/.cache/sheet-music/transcribe-venv/bin/python plugin/skills/audio-to-sheet-music/scripts/transcribe.py --check
+  ```
+
+  The default models are not gated, so no Hugging Face account is needed.
+  If you log in (higher rate limits, or a gated model), run
+  `~/.cache/sheet-music/transcribe-venv/bin/hf auth login` yourself, in a terminal. Never paste
+  the token into a chat or commit it. Hugging Face's own agent skill,
+  `hf-cli` ([huggingface/skills](https://github.com/huggingface/skills)), is
+  an optional companion: `/plugin marketplace add huggingface/skills`, then
+  `/plugin install hf-cli@huggingface-skills` in Claude Code, or
+  `hf skills add hf-cli --global` for Codex.
+
+Treat the result as a draft and check it against the recording. The
+skill's page covers the models, the quality to expect and the limits: no
+tuplets, at most two staves, one tempo and meter.
+
 ## Quick start
 
 ```sh
@@ -235,8 +275,10 @@ node scripts/update-golden.mjs    # after an intended change to the output
 npm run build               # dist/ (the GitHub Pages site)
 ```
 
-Agent skills for writing and rendering scores, and for working on the
-engraver, are in [`.claude/skills/`](.claude/skills/). `CLAUDE.md` has the
+Agent skills for writing and rendering scores, transcribing audio and MIDI,
+and working on the engraver, are in [`.claude/skills/`](.claude/skills/).
+`tests/midi2abc.test.mjs` round-trips the samples' own MIDI through
+`midi2abc.py` (it skips without `python3`; no model is downloaded). `CLAUDE.md` has the
 project rules.
 
 ## pscat

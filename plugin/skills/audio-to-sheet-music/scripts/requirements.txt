@@ -1,0 +1,18 @@
+# The audio side of the audio-to-sheet-music skill (tested with Python 3.11).
+# midi2abc.py needs none of this: it is the Python standard library only.
+# basic-pitch itself is installed with --no-deps by setup.sh: its own
+# requirements pull in TensorFlow, which it does not need with the ONNX model.
+huggingface_hub==2.4.0
+onnxruntime==1.31.1
+librosa==0.11.0
+soundfile==0.14.0
+mido==1.3.3
+pretty_midi==0.2.11.post0
+mir_eval==0.8.2
+resampy==0.4.2
+setuptools==80.9.0  # resampy 0.4.2 imports pkg_resources, gone from setuptools 81+
+scikit-learn==1.9.1
+scipy==1.17.1
+numpy==2.4.6
+typing-extensions
+pyyaml

@@ -379,8 +379,10 @@ def split_staves(notes, staves, split):
     return [top, bottom]
 
 
-def voice(notes):
-    """One voice: [(start, end, [pitches])], chords for shared onsets, cut at the next onset."""
+def voice(notes, fill=F(0)):
+    """One voice: [(start, end, [pitches])], chords for shared onsets, cut at
+    the next onset, and held over a gap of up to `fill` quarters before it
+    (a recorded note often dies away a little before the next one starts)."""
     by_onset = {}
     for n in notes:
         by_onset.setdefault(n['start'], []).append(n)
@@ -391,6 +393,8 @@ def voice(notes):
         end = max(n['end'] for n in group)
         if i + 1 < len(starts):
             end = min(end, starts[i + 1])
+            if starts[i + 1] - end <= fill:
+                end = starts[i + 1]
         out.append((t, end, sorted({n['pitch'] for n in group})))
     return out
 
@@ -438,35 +442,64 @@ def bars_of(events, bar, pickup, total):
     return bars
 
 
+# note values (quarters) and the undotted value each is aligned to
+VALUES = [(F(4), F(4)), (F(3), F(2)), (F(2), F(2)), (F(3, 2), F(1)), (F(1), F(1)), (F(3, 4), F(1, 2)),
+          (F(1, 2), F(1, 2)), (F(3, 8), F(1, 4)), (F(1, 4), F(1, 4)), (F(1, 8), F(1, 8))]
+
+
+def notate(offset, dur, beat, dotted=True):
+    """Split a length starting `offset` quarters into the bar into plain or
+    dotted note values: [lengths], to be tied or rested. A plain value starts
+    on a multiple of itself (or of the beat, if that is shorter); a dotted
+    one on a multiple of twice its plain value (or of the beat). Rests
+    (dotted=False) take plain values, each on a multiple of itself."""
+    out = []
+    while dur > 0:
+        for v, base in VALUES:
+            align = min(base if v == base else 2 * base, beat) if dotted else v
+            if v <= dur and offset % align == 0 and (dotted or v == base):
+                break
+        else:  # off every grid we know: the largest value that fits
+            v = next((v for v, _ in VALUES if v <= dur), dur)
+        out.append(v)
+        offset += v
+        dur -= v
+    return out
+
+
 def bar_text(pieces, spell, unit, beat, bar_start, whole_bar, full_bar):
-    """One bar of one voice as ABC, accidentals per bar and octave."""
+    """One bar of one voice as ABC, accidentals per bar and octave.
+    bar_start is where a full bar would start (before the pickup, for a pickup)."""
     if all(p[2] is None for p in pieces) and full_bar:
         return 'z' + length(whole_bar, unit)
     acc = {}  # (step, octave) -> alteration written in this bar
     out = []
     prev_short = False
     for start, dur, ps, tie, tied_in in pieces:
-        if ps is None:
-            tok = 'z' + length(dur, unit)
-        else:
-            heads = []
-            for p in ps:
-                s, a, o = spell(p)
-                cur = acc.get((s, o), spell.kalt[s])
-                mark = ''
-                # a note tied in from the last bar keeps its pitch without a sign
-                if a != cur and not tied_in:
-                    mark = {-2: '__', -1: '_', 0: '=', 1: '^', 2: '^^'}[a]
-                    acc[(s, o)] = a
-                heads.append(mark + abc_pitch(s, o))
-            tok = heads[0] if len(heads) == 1 else '[' + ''.join(heads) + ']'
-            tok += length(dur, unit) + ('-' if tie else '')
-        short = dur < beat and ps is not None
-        on_beat = (start - bar_start) % beat == 0
-        if out and not (short and prev_short and not on_beat):
-            out.append(' ')
-        out.append(tok)
-        prev_short = short
+        parts = notate(start - bar_start, dur, beat, ps is not None)
+        for k, d in enumerate(parts):
+            if ps is None:
+                tok = 'z' + length(d, unit)
+            else:
+                heads = []
+                for p in ps:
+                    s, a, o = spell(p)
+                    cur = acc.get((s, o), spell.kalt[s])
+                    mark = ''
+                    # a note tied in (from the last bar or the last piece) keeps its pitch without a sign
+                    if a != cur and not tied_in and k == 0:
+                        mark = {-2: '__', -1: '_', 0: '=', 1: '^', 2: '^^'}[a]
+                        acc[(s, o)] = a
+                    heads.append(mark + abc_pitch(s, o))
+                tok = heads[0] if len(heads) == 1 else '[' + ''.join(heads) + ']'
+                tok += length(d, unit) + ('-' if tie or k + 1 < len(parts) else '')
+            short = d < beat and ps is not None
+            on_beat = (start - bar_start) % beat == 0
+            if out and not (short and prev_short and not on_beat):
+                out.append(' ')
+            out.append(tok)
+            prev_short = short
+            start += d
     return ''.join(out)
 
 
@@ -485,7 +518,8 @@ def to_abc(midi, args):
     if not notes:
         raise SystemExit('midi2abc: no notes in the file')
     notes = quantize(notes, grid)
-    t0 = min(n['start'] for n in notes)  # leading silence is not music
+    # leading silence is not music: drop whole beats of it, so the notes keep their place in the beat
+    t0 = min(n['start'] for n in notes).__floor__()
     if args.trim:
         notes = [dict(n, start=n['start'] - t0, end=n['end'] - t0) for n in notes]
 
@@ -523,7 +557,7 @@ def to_abc(midi, args):
     unit = F(1, 2)  # L:1/8
     compound = den == 8 and num % 3 == 0 and num > 3
     beat = F(3, 2) if compound else F(4, den)
-    voices = [bars_of(voice(s), bar, pickup, total) for s in staves]
+    voices = [bars_of(voice(s, grid * args.fill_gaps), bar, pickup, total) for s in staves]
 
     title = args.title or midi['names'].get(0) or midi['names'].get(1) or os.path.splitext(os.path.basename(args.midi))[0]
     # one staff: the clef with fewer ledger lines (treble E4-F5, bass G2-A3)
@@ -553,7 +587,7 @@ def to_abc(midi, args):
             parts = []
             for b in range(first, min(first + per, nbars)):
                 full = not (pickup and b == 0)
-                parts.append(bar_text(bars[b], spell, unit, beat, edges[b], bar, full))
+                parts.append(bar_text(bars[b], spell, unit, beat, edges[b] if full else pickup - bar, bar, full))
             last = first + per >= nbars
             lines.append(' | '.join(parts) + (' |]' if last else ' |'))
     return '\n'.join(lines) + '\n'
@@ -575,6 +609,7 @@ def main(argv=None):
     ap.add_argument('--pickup', help='the pickup as a fraction of a whole note, e.g. 1/4 (default: guessed)')
     ap.add_argument('--bpm', help='read the file as seconds and quarter notes at this tempo (MIDI played freely)')
     ap.add_argument('--grid', type=int, default=16, choices=[4, 8, 16, 32], help='quantize to this note value (16: sixteenths)')
+    ap.add_argument('--fill-gaps', type=int, default=1, help='hold a note over a rest of up to this many grid steps before the next note (0: never)')
     ap.add_argument('--staves', default='auto', choices=['auto', '1', '2'])
     ap.add_argument('--split', type=int, default=60, help='lowest pitch of the top staff when splitting (60: middle C)')
     ap.add_argument('--bars-per-line', type=int, default=4)

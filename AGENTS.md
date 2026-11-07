@@ -39,6 +39,29 @@ codex plugin add sheet-music@artcolony
 Or use `/plugins` in Codex, or **Plugins** in the ChatGPT desktop app, after
 adding the marketplaces. Start a new session after installing.
 
+### Transcribing audio (the audio-to-sheet-music skill)
+
+The plugin's second skill turns a recording or a MIDI file into ABC and then
+into a score. The ABC goes to the same engraving loop as `ps-sheet-music`.
+It runs on the user's machine and needs more than pscat:
+
+- **MIDI only:** `python3` (standard library). Nothing else.
+- **Audio:** a virtual environment made by the skill's `scripts/setup.sh VENV`
+  (about 300 MB; `--with-separation` / `--with-piano` add PyTorch, about 1 GB).
+  Then run `VENV/bin/python scripts/transcribe.py --check`, which lists each
+  step as `ok` / `MISS` / `opt`. Ask the user before installing, and use only the venv.
+- **Hugging Face:** the pinned models (Basic Pitch ONNX, Demucs `adefossez/HTDemucs`,
+  the ByteDance piano checkpoint) are public and not gated. No account or
+  token is needed. If the user logs in anyway, they run `VENV/bin/hf auth login`
+  themselves, in a terminal. An agent never asks for the token in chat,
+  never writes it to the repo, and never accepts a model's terms for the user.
+- **Hugging Face's agent skill (optional, not a dependency):** in Claude Code,
+  `/plugin marketplace add huggingface/skills` and
+  `/plugin install hf-cli@huggingface-skills`. In Codex, `hf skills add hf-cli --global`
+  (into `~/.agents/skills`). It is deliberately not in `dependencies`: a
+  missing dependency stops the whole sheet-music plugin from loading, and
+  the notation skill does not need Hugging Face.
+
 ### Where the library is once installed
 
 - **Claude Code:** `${CLAUDE_PLUGIN_ROOT}/lib/`. The skill text has it
@@ -83,6 +106,7 @@ adding the marketplaces. Start a new session after installing.
 plugin/.claude-plugin/plugin.json   Claude Code manifest (dependencies: pscat@pscat)
 plugin/plugin.json                  Agent Plugins manifest + OpenAI interface (no dependency field exists)
 plugin/skills/<name>/SKILL.md       the skills, as real files (Codex drops symlinks); .claude/skills links here
+plugin/skills/audio-to-sheet-music/scripts/   midi2abc.py (deterministic, stdlib), transcribe.py + setup.sh + requirements.txt (the ML side)
 plugin/lib/*.ps                     copies of lib/*.ps, made by scripts/build-plugin.mjs
 ```
 
@@ -91,6 +115,12 @@ plugin/lib/*.ps                     copies of lib/*.ps, made by scripts/build-pl
   `tests/plugin.test.mjs` fails while `plugin/` is out of date, and also
   checks the manifests and runs `claude plugin validate` when the CLI is
   present.
+- **Skill scripts live only in `plugin/`.** The build script does not copy
+  them. `tests/plugin.test.mjs` checks that they are real, executable files
+  named in their SKILL.md, and that every model is pinned to a Hub commit
+  and a SHA-256. `tests/midi2abc.test.mjs` round-trips the samples' MIDI
+  through `midi2abc.py`. It skips when there is no `python3`, and it runs
+  Python with `-B`, so no `__pycache__` lands in `plugin/`.
 - **Release:** bump `version` in `package.json`, run the build script, and
   commit. Users get it with `claude plugin marketplace update artcolony` or
   `codex plugin marketplace upgrade artcolony`.
