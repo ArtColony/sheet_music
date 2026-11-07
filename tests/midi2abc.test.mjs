@@ -101,6 +101,25 @@ test('midi2abc: meter, key and pickup are recovered for simple tunes', { skip },
   assert.match(tw, /^T:T$/m);
 });
 
+test('midi2abc: --bpm reads MIDI played freely against a default tempo; --pickup sets the first bar', { skip }, () => {
+  setup();
+  // Twinkle played at 100 bpm into a file that says 120: every time is 6/5 as long in beats
+  const tw = perfs[0];
+  const scale = (f) => F(f[0] * 6, f[1] * 5);
+  const free = { ...tw, tempo: { beat: [1, 4], bpm: 120 }, notes: tw.notes.map((n) => ({ ...n, at: scale(n.at), dur: scale(n.dur) })) };
+  const abc = midi2abc('twinkle-free', midiFile(free), ['--bpm', '100']);
+  assert.match(abc, /^Q:1\/4=100$/m);
+  assert.deepEqual(notesOf(psPerformances([[abc]])[0]), notesOf(tw));
+  // Amazing Grace: the guessed pickup, the same given, and none
+  const ag = perfs[SAMPLES.indexOf('amazing-grace')];
+  const given = midi2abc('ag-pickup', midiFile(ag, { title: ag.title }), ['--pickup', '1/4']);
+  const none = midi2abc('ag-nopickup', midiFile(ag), ['--pickup', '0']);
+  assert.equal(given, outs[SAMPLES.indexOf('amazing-grace')]);
+  assert.match(none, /^D2 G4 \| BG B4 \|/m);
+  const out = runPS('(lib/sheet.ps) run\n' + psLiteral(none) + ' sm-abc-check-string\n0 0 1 1 rectfill showpage\n');
+  assert.match(out, /^sm-abc: ok$/m);
+});
+
 test('midi2abc: the same MIDI gives the same bytes; --notes lists the notes', { skip }, () => {
   setup();
   const again = midi2abc('again', midiFile(blurred(perfs[2]), { title: perfs[2].title }));

@@ -273,7 +273,7 @@ def check():
         r = subprocess.run([hf, 'auth', 'whoami'], capture_output=True, text=True)
         who = r.stdout.strip().splitlines()[0] if r.returncode == 0 and r.stdout.strip() else ''
     row(bool(who), 'Hugging Face login (optional for these models: %s)' % (who or 'anonymous'),
-        'optional: run `%s auth login` yourself in a terminal (in Claude Code: `! %s auth login`) and paste the token there, never in chat' % (hf, hf), True)
+        'optional: the user runs `%s auth login` in their own terminal and pastes the token there (never in chat)' % hf, True)
     try:
         from huggingface_hub import HfApi
         api = HfApi()

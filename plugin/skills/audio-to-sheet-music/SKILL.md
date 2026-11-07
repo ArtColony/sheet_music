@@ -30,7 +30,7 @@ The scripts are in this skill's `scripts/` directory. Call it `SCRIPTS`.
 |---|---|---|
 | `midi2abc.py` | `python3` (3.8+, standard library only) | MIDI → ABC, deterministic |
 | `transcribe.py` | the venv from `setup.sh` | audio → beat-aligned MIDI; `--check` checks the setup |
-| `setup.sh` | `python3` or `uv` | makes that venv (nothing installed outside it) |
+| `setup.sh` | Python 3.10–3.12, or `uv` | makes that venv (the packages go into it only) |
 
 Engraving needs **pscat** and the sheet-music library, as in the
 `ps-sheet-music` skill. Check `pscat --version` or the pscat MCP tools first;
@@ -55,7 +55,10 @@ Ask before installing anything. Say where the venv will go and how big it is:
 | `--with-piano` | the piano model's code (PyTorch) | about 1 GB more (shared with the line above) |
 
 Suggest `~/.cache/sheet-music/transcribe-venv`, or a `.venv-transcribe`
-folder in the project (add that folder to `.gitignore`).
+folder in the project (add that folder to `.gitignore`). Some things are
+written outside the venv: pip's or uv's download cache, the model cache, and
+a Python 3.11 that uv downloads into `~/.local/share/uv/python` when the
+machine has no Python 3.10–3.12. Mention these too.
 
 ```sh
 sh SCRIPTS/setup.sh VENV                      # add --with-separation / --with-piano when needed
@@ -75,14 +78,12 @@ model):
 
 1. They make an account at <https://huggingface.co/join>. Do not make one for them.
 2. They make a **read** token at <https://huggingface.co/settings/tokens>.
-3. They run **`VENV/bin/hf auth login`** themselves in their own terminal
-   and paste the token at its hidden prompt. `hf` comes with
-   `huggingface_hub` in the venv. In Claude Code they can type
-   `! VENV/bin/hf auth login`, but a separate terminal is safer.
-   **Never ask for the token in chat. Never write it to a file in the
-   project, and never commit it.** `hf` keeps it in
-   `~/.cache/huggingface/token`. Setting `HF_TOKEN` in their own shell
-   profile also works.
+3. They run **`VENV/bin/hf auth login`** themselves, **in their own
+   terminal** (not through the agent), and paste the token at its hidden
+   prompt. `hf` comes with `huggingface_hub` in the venv, and it keeps the
+   token in `~/.cache/huggingface/token`. Setting `HF_TOKEN` in their own
+   shell profile also works. **Never ask for the token in chat. Never write
+   it to a file in the project, and never commit it.**
 4. Check with `VENV/bin/hf auth whoami` (or `--check`).
 5. **Gated model:** the user opens the model page while logged in, reads
    the terms and clicks to accept them. Do not accept for them. `--check`
