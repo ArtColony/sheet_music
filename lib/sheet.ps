@@ -7,6 +7,7 @@
 %   sm_abc_parse.ps  the ABC parser (sm-abc-parse, sm-abc-warnings, ...)
 %   sm_abc.ps        layout and engraving (sm-abc-engrave, sm-abc-engrave-file, ...)
 %   sm_transpose.ps  transposition (sm-score-transpose, the /transpose option), if present
+%   sm_musicxml.ps   the MusicXML parser (sm-musicxml-parse, sm-musicxml-engrave-file, ...), if present
 % and defines the agent-facing helpers below. Reference: docs/postscript-api.md.
 %
 % Finding the library. pscat cannot tell a program the path of the file it
@@ -32,6 +33,14 @@
 %   (song.abc) sm-abc-check-file -         parse every tune, print the summary, the parse
 %   (abc text) sm-abc-check-string -       warnings and bars whose length disagrees
 %                                          with the meter; draws nothing
+%   MusicXML (sm_musicxml.ps):
+%   (song.musicxml) [options] sm-musicxml-engrave-file -   read, parse, engrave
+%   (xml text) [options] sm-musicxml-engrave-string -
+%   [options] sm-musicxml-engrave-here -   engrave the MusicXML that follows this line,
+%                                          up to a line %%SM-ABC-END or EOF
+%   sm-musicxml-here (text)                read that text without engraving it
+%   (song.musicxml) sm-musicxml-check-file -   parse, print the summary, warnings and
+%   (xml text) sm-musicxml-check-string -      bars off the meter (or the parse error)
 %   sm-sheet-version (x.y.z)
 % Parse warnings are printed by the engrave procedures too (options /quiet true
 % silences them). Options are those of sm-abc-engrave (see lib/sm_abc.ps):
@@ -85,6 +94,8 @@ sm-lib-dir (sm_abc_parse.ps) sm-sheet-dict /sm-sh-cat get exec run
 sm-lib-dir (sm_abc.ps) sm-sheet-dict /sm-sh-cat get exec run
 % optional: run outside stopped, so an error inside it is reported as usual
 sm-lib-dir (sm_transpose.ps) sm-sheet-dict /sm-sh-cat get exec
+dup sm-sheet-dict /sm-sh-exists get exec { run } { pop } ifelse
+sm-lib-dir (sm_musicxml.ps) sm-sheet-dict /sm-sh-cat get exec
 dup sm-sheet-dict /sm-sh-exists get exec { run } { pop } ifelse
 currentdict /sm-sh-dir undef
 
@@ -199,6 +210,30 @@ sm-sheet-dict begin
 /sm-sh-readfile { % path -> text
   (r) file dup null sm-abc-readsrc exch closefile
 } bind def
+% MusicXML: the summary line, the warnings and the bars off the meter, or
+% the reason the text does not parse
+/sm-sh-xcheck { % text ->
+  mark exch { sm-musicxml-parse } stopped {
+    cleartomark
+    (sm-abc: error: ) print
+    /sm-musicxml-error where { pop sm-musicxml-error } { null } ifelse
+    dup null eq { pop $error /errorname get sm-sh-cvs } if =
+    (sm-abc: check: the MusicXML does not parse) =
+  } {
+    exch pop /sm-sh-xs exch def
+    (sm-abc: musicxml  ") print sm-sh-xs /meta get /title sm-sh-get dup null eq { pop () } if print (") print
+    (  M:) print sm-sh-xs /initial get /time get sm-sh-time print
+    (  K:) print sm-sh-xs /initial get /key get /fifths get sm-sh-key print
+    (  bars ) print sm-sh-xs /measures get length sm-sh-cvs print
+    (  staves ) print sm-sh-xs /staves get length sm-sh-cvs =
+    /sm-sh-nw sm-musicxml-warnings length def
+    sm-musicxml-warnings { (sm-abc: warning: ) print = } forall
+    /sm-sh-nb sm-sh-xs sm-sh-bars def
+    (sm-abc: check: 1 score, ) print sm-sh-nw sm-sh-cvs print ( warning\(s\), ) print
+    sm-sh-nb sm-sh-cvs print ( bar\(s\) off the meter) =
+    sm-sh-nw sm-sh-nb add 0 eq { (sm-abc: ok) = } if
+  } ifelse
+} bind def
 end % sm-sheet-dict
 
 % ---------------------------------------------------------------- public
@@ -216,5 +251,15 @@ end % sm-sheet-dict
 /sm-abc-list-file { sm-sheet-dict begin sm-sh-readfile sm-sh-list end } bind def
 /sm-abc-check-string { sm-sheet-dict begin sm-sh-check end } bind def
 /sm-abc-check-file { sm-sheet-dict begin sm-sh-readfile sm-sh-check end } bind def
+% MusicXML (lib/sm_musicxml.ps): the same, for a score-partwise document
+% sm-musicxml-here (text): as sm-abc-here, up to a line %%SM-ABC-END or EOF
+/sm-musicxml-here { currentfile sm-sheet-dict /sm-sh-mark get sm-abc-readsrc } bind def
+% [options] sm-musicxml-engrave-here -
+/sm-musicxml-engrave-here {
+  count 0 gt { dup type /dicttype eq } { false } ifelse not { 0 dict } if
+  sm-musicxml-here exch sm-musicxml-engrave-string
+} bind def
+/sm-musicxml-check-string { sm-sheet-dict begin sm-sh-xcheck end } bind def
+/sm-musicxml-check-file { sm-sheet-dict begin sm-sh-readfile sm-sh-xcheck end } bind def
 
 end % userdict

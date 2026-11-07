@@ -15,6 +15,7 @@ own notation. This page lists every public name. The generated
 | [`lib/sm_abc_parse.ps`](../lib/sm_abc_parse.ps) | ABC text → Score dictionary |
 | [`lib/sm_abc.ps`](../lib/sm_abc.ps) | layout and engraving of a Score, the one-liners |
 | [`lib/sm_transpose.ps`](../lib/sm_transpose.ps) | transposition of a Score (loaded by `sheet.ps` when present) |
+| [`lib/sm_musicxml.ps`](../lib/sm_musicxml.ps) | MusicXML text → Score dictionary, and its engrave procedures (loaded by `sheet.ps` when present) |
 
 ## Quick start
 
@@ -42,7 +43,8 @@ leftover stack or unbalanced `gsave`.
 ## Loading: `lib/sheet.ps` and `sm-lib-dir`
 
 `(path/to/sheet.ps) run` loads `sm_engrave.ps`, `sm_abc_parse.ps`,
-`sm_abc.ps` and, if the file exists, `sm_transpose.ps`, all into `userdict`.
+`sm_abc.ps` and, if the files exist, `sm_transpose.ps` and `sm_musicxml.ps`,
+all into `userdict`.
 pscat cannot tell a program the path of the file it is running, so
 `sheet.ps` looks for its siblings in this order and uses the first directory
 that has `sm_engrave.ps`:
@@ -212,6 +214,63 @@ dictionary `src/score.js` describes (`/meta /initial /staves /measures
 ```postscript
 (lib/sheet.ps) run
 (samples/twinkle.abc) sm-abc-parse-file /meta get /title get =    % Twinkle, Twinkle, Little Star
+```
+
+## MusicXML
+
+From [`lib/sm_musicxml.ps`](../lib/sm_musicxml.ps) (#5), which `sheet.ps`
+loads. It reads an uncompressed `score-partwise` document (`.musicxml` or
+`.xml`; unzip a `.mxl` first) into the same Score the ABC parser builds, so
+the same layout engraves it. It is a port of `src/musicxml.js` and gives the
+same Score for every input (`tests/ps-musicxml.test.mjs`). It reads: parts and
+multi-staff parts (one voice per staff, the first found), keys, meters
+(common/cut, `3+2`, `senza-misura`), clefs, notes, rests, chords, dots, ties,
+slurs, tuplets, beams (or automatic beaming when a part has none),
+accidentals, grace notes, fermatas, articulations, ornaments, bowings,
+dynamics, wedges, words, metronome marks, chord symbols (`<harmony>`), lyrics,
+barlines, repeats, endings and `new-system` breaks. The XML reader handles
+attributes in either quote, self-closing tags, the five named entities and
+numeric ones (`&#233;`, `&#x1F3B5;`, written out as UTF-8), comments, CDATA,
+processing instructions and the DOCTYPE.
+
+```sh
+pscat --pdf song.pdf --page 612x792 -e '(lib/sheet.ps) run (song.musicxml) sm-musicxml-engrave-file'
+```
+
+| Procedure | Stack |
+|---|---|
+| `sm-musicxml-engrave-file` | `(song.musicxml) sm-musicxml-engrave-file –` or `(song.musicxml) options sm-musicxml-engrave-file –` |
+| `sm-musicxml-engrave-string` | `(xml text) sm-musicxml-engrave-string –` or `(xml text) options sm-musicxml-engrave-string –` |
+| `sm-musicxml-engrave-here` | `sm-musicxml-engrave-here –` or `options sm-musicxml-engrave-here –`: the MusicXML is the rest of the program file, up to a line `%%SM-ABC-END` (in `sheet.ps`) |
+| `sm-musicxml-here` | `sm-musicxml-here (text)`: read that text without engraving it (in `sheet.ps`) |
+| `sm-musicxml-check-file` | `(song.musicxml) sm-musicxml-check-file –`: a summary line, the warnings, bars off the meter and `sm-abc: ok`, or the parse error (in `sheet.ps`) |
+| `sm-musicxml-check-string` | `(xml text) sm-musicxml-check-string –`: the same |
+| `sm-musicxml-parse` | `(xml text) sm-musicxml-parse score` |
+| `sm-musicxml-parse-file` | `(path.musicxml) sm-musicxml-parse-file score` |
+| `sm-musicxml-warnings` | value: `[(text) ...]` from the last parse (`staff 1: only one voice per staff is engraved; voice 2 was skipped`) |
+| `sm-musicxml-error` | value: why the last parse failed, or `null` |
+
+The options are [`sm-abc-engrave`'s](#options) (`/tune` does not apply). The
+engrave procedures print the warnings as `sm-abc: warning: ...` unless
+`/quiet true`. A comment line `<!-- %%transpose N -->` adds to `/transpose`,
+and `<!-- %%annotation ... -->` lines become the `/annotations` (both read by
+`sm_abc_parse.ps`, which `sheet.ps` loads).
+
+A document the parser cannot read (malformed XML, no `<score-partwise>`, a
+`score-timewise` file) raises `syntaxerror` with the reason as the offending
+command, `sm-musicxml: not a MusicXML score (no <score-partwise>)`, and leaves
+the reason in `sm-musicxml-error`. Catch it with `stopped`:
+
+```postscript
+(lib/sheet.ps) run
+{ (notes.xml) sm-musicxml-parse-file } stopped { sm-musicxml-error = } { /score exch def } ifelse
+```
+
+```
+$ pscat --pdf /dev/null -e '(lib/sheet.ps) run (samples/frere-jacques.musicxml) sm-musicxml-check-file 0 0 1 1 rectfill showpage'
+sm-abc: musicxml  "Frère Jacques"  M:4/4  K:0  bars 8  staves 1
+sm-abc: check: 1 score, 0 warning(s), 0 bar(s) off the meter
+sm-abc: ok
 ```
 
 ## Transposing
@@ -550,15 +609,19 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (parser), `sm-rb-` (ribbon),
 
 | Name | Kind | Defined in | Source comment |
 |---|---|---|---|
-| `sm-sheet-version` | value | [lib/sheet.ps](../lib/sheet.ps#L50) |  |
-| `sm-sheet-dict` | value | [lib/sheet.ps](../lib/sheet.ps#L51) |  |
-| `sm-lib-dir` | value | [lib/sheet.ps](../lib/sheet.ps#L67) |  |
-| `sm-abc-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L207) |  |
-| `sm-abc-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L211) | [options] sm-abc-engrave-here - |
-| `sm-abc-list-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L215) |  |
-| `sm-abc-list-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L216) |  |
-| `sm-abc-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L217) |  |
-| `sm-abc-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L218) |  |
+| `sm-sheet-version` | value | [lib/sheet.ps](../lib/sheet.ps#L59) |  |
+| `sm-sheet-dict` | value | [lib/sheet.ps](../lib/sheet.ps#L60) |  |
+| `sm-lib-dir` | value | [lib/sheet.ps](../lib/sheet.ps#L76) |  |
+| `sm-abc-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L242) |  |
+| `sm-abc-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L246) | [options] sm-abc-engrave-here - |
+| `sm-abc-list-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L250) |  |
+| `sm-abc-list-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L251) |  |
+| `sm-abc-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L252) |  |
+| `sm-abc-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L253) |  |
+| `sm-musicxml-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L256) | sm-musicxml-here (text): as sm-abc-here, up to a line %%SM-ABC-END or EOF |
+| `sm-musicxml-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L258) | [options] sm-musicxml-engrave-here - |
+| `sm-musicxml-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L262) |  |
+| `sm-musicxml-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L263) |  |
 | `sm-r2` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L63) |  |
 | `sm-abc-engrave` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1594) |  |
 | `sm-abc-readsrc` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1609) | file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF) |
@@ -661,6 +724,12 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (parser), `sm-rb-` (ribbon),
 | `sm-annot-text` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L634) | x y t r g b sm-annot-text   -- an italic note, baseline at y |
 | `sm-annot-circle` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L638) | x y w h r g b sm-annot-circle   -- an ellipse drawn inside the box |
 | `sm-annot-highlight` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L648) | x y w h r g b sm-annot-highlight   -- a pale box, drawn under the music |
+| `sm-musicxml-warnings` | value | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L958) |  |
+| `sm-musicxml-error` | value | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L959) |  |
+| `sm-musicxml-parse` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L961) | (xml text) sm-musicxml-parse score |
+| `sm-musicxml-parse-file` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L978) | (path.musicxml) sm-musicxml-parse-file score |
+| `sm-musicxml-engrave-string` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L980) | (xml text) [options] sm-musicxml-engrave-string - |
+| `sm-musicxml-engrave-file` | proc | [lib/sm_musicxml.ps](../lib/sm_musicxml.ps#L996) | (path.musicxml) [options] sm-musicxml-engrave-file - |
 | `sm-score-transpose` | proc | [lib/sm_transpose.ps](../lib/sm_transpose.ps#L203) |  |
 | `sm-transpose-fifths-shift` | proc | [lib/sm_transpose.ps](../lib/sm_transpose.ps#L204) |  |
 | `sm-transpose-pitch` | proc | [lib/sm_transpose.ps](../lib/sm_transpose.ps#L205) |  |

@@ -1,0 +1,1002 @@
+%!PS
+% sm_musicxml.ps -- MusicXML (score-partwise) -> Score dict, entirely in PostScript.
+%
+% Part of ArtColony/sheet_music (MIT). A port of src/musicxml.js (its XML
+% reader parseXML and its mapping parseMusicXML) plus the half of
+% src/score.js finalizeScore a MusicXML score needs: the dict it builds is
+% psLiteral(parseMusicXML(src).score), the same Score structure the ABC
+% parser (lib/sm_abc_parse.ps) builds, so lib/sm_abc.ps's sm-abc-engrave
+% lays it out unchanged. tests/ps-musicxml.test.mjs checks that against the
+% JS parser for every MusicXML sample and fixture.
+%
+% Public entry points
+%   (xml text) sm-musicxml-parse       -> Score
+%   (path.musicxml) sm-musicxml-parse-file -> Score
+%   sm-musicxml-warnings               -> [(text) ...] what the last parse
+%                                         skipped or approximated, as in
+%                                         parseMusicXML's warnings
+%   sm-musicxml-error                  -> (text) | null   why the last parse
+%                                         failed. A failed parse raises
+%                                         syntaxerror (the offending command
+%                                         names the reason), so a program can
+%                                         catch it with stopped
+%   (xml text) [options] sm-musicxml-engrave-string -
+%   (path.musicxml) [options] sm-musicxml-engrave-file -
+%                                         parse and engrave with sm-abc-engrave
+%                                         (lib/sm_abc.ps, which must be loaded);
+%                                         options as sm-abc-engrave's. A
+%                                         <!-- %%transpose N --> or
+%                                         <!-- %%annotation ... --> comment line
+%                                         is applied when lib/sm_abc_parse.ps is
+%                                         loaded too (lib/sheet.ps loads all)
+%   lib/sheet.ps adds sm-musicxml-engrave-here, sm-musicxml-here and the
+%   check helpers sm-musicxml-check-string / sm-musicxml-check-file.
+%
+% Coverage: what src/musicxml.js reads -- parts and multi-staff parts, one
+% voice per staff (the first voice found; others dropped with a warning),
+% keys, meters (common/cut, a+b, senza-misura), clefs, notes, rests, measure
+% rests, chords, dots, ties, slurs, tuplets, beams (or automatic beaming when
+% the part has none), accidentals, grace notes, fermatas, articulations,
+% ornaments, bowings, dynamics, wedges, words, metronome marks, harmony,
+% lyrics, barlines, repeats, endings and new-system breaks. The XML reader
+% handles elements, attributes (either quote), self-closing tags, the five
+% named entities and numeric ones (to UTF-8), comments, CDATA, processing
+% instructions and DOCTYPE (with an internal subset), and passes UTF-8
+% through. Text is trimmed as JavaScript's String.prototype.trim does
+% (Unicode white space included). Compressed .mxl and score-timewise files
+% are not read (an error says so).
+%
+% Conventions: every name starts with sm-; internals are sm-mxp-* and live in
+% the private dict sm-mxp-dict, which the entry points begin/end. Nothing
+% recurses; the XML tree is built with an explicit stack. Nothing here reads
+% the clock or a random source.
+
+userdict begin
+
+/sm-mxp-dict 500 dict def
+sm-mxp-dict begin
+
+% ================================================================ strings
+/sm-mxp-ch { 2 copy exch length lt { get } { pop pop -1 } ifelse } bind def        % s i -> byte | -1
+/sm-mxp-tail { 1 index length 1 index sub getinterval } bind def                    % s i -> s[i..]
+/sm-mxp-sub { 1 index sub getinterval } bind def                                    % s i j -> s[i..j)
+/sm-mxp-copy { dup length string copy } bind def
+/sm-mxp-cat {
+  1 index length 1 index length add string
+  dup 0 4 index putinterval dup 3 index length 3 index putinterval
+  3 1 roll pop pop
+} bind def
+/sm-mxp-pre { anchorsearch { pop pop true } { pop false } ifelse } bind def
+/sm-mxp-has { search { pop pop pop true } { pop false } ifelse } bind def
+/sm-mxp-isdig { dup 48 ge exch 57 le and } bind def
+/sm-mxp-ishex { dup sm-mxp-isdig 1 index 65 ge 2 index 70 le and or 1 index 97 ge 2 index 102 le and or exch pop } bind def
+/sm-mxp-isword { dup 65 ge 1 index 90 le and 1 index 97 ge 2 index 122 le and or 1 index sm-mxp-isdig or exch 95 eq or } bind def
+/sm-mxp-digits { { 2 copy sm-mxp-ch sm-mxp-isdig { 1 add } { exit } ifelse } loop exch pop } bind def  % s i -> j
+/sm-mxp-itoa { 24 string cvs sm-mxp-copy } bind def
+% s i pat sm-mxp-find j : the first index >= i where pat starts, or -1
+/sm-mxp-find {
+  3 1 roll dup 3 1 roll sm-mxp-tail 3 -1 roll search
+  { length 4 1 roll pop pop add } { pop pop -1 } ifelse
+} bind def
+
+% JavaScript white space (what String.prototype.trim and \s strip): TAB LF
+% VT FF CR SP, U+00A0, U+1680, U+2000-200A, U+2028, U+2029, U+202F, U+205F,
+% U+3000 and U+FEFF, as UTF-8.
+% s i sm-mxp-wsf n : length in bytes of the white-space character at i (0: none)
+/sm-mxp-wsf {
+  /sm-mxp-wi exch def /sm-mxp-ws exch def
+  /sm-mxp-w0 sm-mxp-ws sm-mxp-wi sm-mxp-ch def
+  sm-mxp-w0 32 eq sm-mxp-w0 9 ge sm-mxp-w0 13 le and or { 1 } {
+  sm-mxp-w0 16#C2 eq { sm-mxp-ws sm-mxp-wi 1 add sm-mxp-ch 16#A0 eq { 2 } { 0 } ifelse } {
+  sm-mxp-w0 16#E1 eq sm-mxp-w0 16#E2 eq or sm-mxp-w0 16#E3 eq or sm-mxp-w0 16#EF eq or {
+    /sm-mxp-w1 sm-mxp-ws sm-mxp-wi 1 add sm-mxp-ch def /sm-mxp-w2 sm-mxp-ws sm-mxp-wi 2 add sm-mxp-ch def
+    sm-mxp-w0 16#E1 eq { sm-mxp-w1 16#9A eq sm-mxp-w2 16#80 eq and } {
+    sm-mxp-w0 16#E3 eq { sm-mxp-w1 16#80 eq sm-mxp-w2 16#80 eq and } {
+    sm-mxp-w0 16#EF eq { sm-mxp-w1 16#BB eq sm-mxp-w2 16#BF eq and } {
+      sm-mxp-w1 16#80 eq {
+        sm-mxp-w2 16#80 ge sm-mxp-w2 16#8A le and sm-mxp-w2 16#A8 eq or sm-mxp-w2 16#A9 eq or sm-mxp-w2 16#AF eq or }
+      { sm-mxp-w1 16#81 eq sm-mxp-w2 16#9F eq and } ifelse } ifelse } ifelse } ifelse
+    { 3 } { 0 } ifelse } { 0 } ifelse } ifelse } ifelse
+} bind def
+% s j sm-mxp-wsb n : length of the white-space character that ends just before j
+/sm-mxp-wsb {
+  /sm-mxp-wj exch def /sm-mxp-wt exch def
+  sm-mxp-wj 1 lt { 0 } {
+    sm-mxp-wt sm-mxp-wj 1 sub get dup 32 eq exch dup 9 ge exch 13 le and or { 1 } {
+      sm-mxp-wj 2 ge { sm-mxp-wt sm-mxp-wj 2 sub sm-mxp-wsf 2 eq } { false } ifelse { 2 } {
+      sm-mxp-wj 3 ge { sm-mxp-wt sm-mxp-wj 3 sub sm-mxp-wsf 3 eq } { false } ifelse { 3 } { 0 } ifelse } ifelse } ifelse
+  } ifelse
+} bind def
+% s sm-mxp-trim s'  (a view into s)
+/sm-mxp-trim {
+  /sm-mxp-tt exch def /sm-mxp-ta 0 def /sm-mxp-tb sm-mxp-tt length def
+  { sm-mxp-ta sm-mxp-tb ge { exit } if
+    sm-mxp-tt sm-mxp-ta sm-mxp-wsf dup 0 eq { pop exit } if sm-mxp-ta add /sm-mxp-ta exch def } loop
+  { sm-mxp-tb sm-mxp-ta le { exit } if
+    sm-mxp-tt sm-mxp-tb sm-mxp-wsb dup 0 eq { pop exit } if sm-mxp-tb exch sub /sm-mxp-tb exch def } loop
+  sm-mxp-tt sm-mxp-ta sm-mxp-tb sm-mxp-sub
+} bind def
+% s sm-mxp-skipws i : index of the first non-white-space character
+/sm-mxp-skipws {
+  /sm-mxp-ks exch def 0
+  { sm-mxp-ks 1 index sm-mxp-wsf dup 0 eq { pop exit } if add } loop
+} bind def
+
+% string builders: << /s string /n count >>
+/sm-mxp-sbnew { << /s 256 string /n 0 >> } bind def
+/sm-mxp-sbroom { % sb k -> sb
+  { 1 index /n get 1 index add 2 index /s get length le { exit } if
+    1 index /s get dup length 2 mul string dup 0 4 -1 roll putinterval 2 index /s 3 -1 roll put } loop pop
+} bind def
+/sm-mxp-sbputs { % sb str -> -
+  exch 1 index length sm-mxp-sbroom
+  dup /s get 1 index /n get 3 index putinterval
+  dup /n get 3 -1 roll length add /n exch put
+} bind def
+/sm-mxp-sbputc { % sb c -> -
+  exch 1 sm-mxp-sbroom
+  dup /s get 1 index /n get 4 -1 roll put
+  dup /n get 1 add /n exch put
+} bind def
+/sm-mxp-sbstr { dup /s get 0 3 -1 roll /n get getinterval sm-mxp-copy } bind def
+/sm-mxp-sbclear { /n 0 put } bind def
+
+% growable lists: << /a array /n count >>
+/sm-mxp-lnew { << /a 8 array /n 0 >> } bind def
+/sm-mxp-lpush { % list item -> -
+  exch dup /n get 1 index /a get length ge {
+    dup /a get dup length 2 mul array dup 0 4 -1 roll putinterval 1 index /a 3 -1 roll put } if
+  dup /a get 1 index /n get 4 -1 roll put
+  dup /n get 1 add /n exch put
+} bind def
+/sm-mxp-larr { dup /a get 0 3 -1 roll /n get getinterval } bind def
+/sm-mxp-lget { exch /a get exch get } bind def
+/sm-mxp-llast { dup /n get 1 sub sm-mxp-lget } bind def
+/sm-mxp-lpop { % list -> item | null
+  dup /n get 0 eq { pop null } { dup /n get 1 sub 2 copy /n exch put exch /a get exch get } ifelse
+} bind def
+% list i sm-mxp-lat item|null : item i, null past the end
+/sm-mxp-lat { 1 index /n get 1 index gt { sm-mxp-lget } { pop pop null } ifelse } bind def
+
+% ================================================================ numbers
+% s sm-mxp-int n|null : parseInt(s, 10)
+/sm-mxp-int {
+  /sm-mxp-is exch def /sm-mxp-ip sm-mxp-is sm-mxp-skipws def
+  /sm-mxp-ineg sm-mxp-is sm-mxp-ip sm-mxp-ch 45 eq def
+  sm-mxp-is sm-mxp-ip sm-mxp-ch dup 43 eq exch 45 eq or { /sm-mxp-ip sm-mxp-ip 1 add def } if
+  /sm-mxp-iq sm-mxp-is sm-mxp-ip sm-mxp-digits def
+  sm-mxp-iq sm-mxp-ip gt {
+    0 sm-mxp-is sm-mxp-ip sm-mxp-iq sm-mxp-sub { 48 sub exch 10 mul add } forall sm-mxp-ineg { neg } if
+  } { null } ifelse
+} bind def
+% s d sm-mxp-intd n : parseInt(s || d), with d for an empty string and 0 for NaN
+/sm-mxp-intd { 1 index length 0 eq { exch pop } { pop } ifelse sm-mxp-int dup null eq { pop 0 } if } bind def
+% s sm-mxp-float x|null : parseFloat(s); an integral value is an integer
+/sm-mxp-float {
+  /sm-mxp-fs exch def /sm-mxp-fp sm-mxp-fs sm-mxp-skipws def
+  /sm-mxp-fs sm-mxp-fs sm-mxp-fp sm-mxp-tail def /sm-mxp-fp 0 def
+  sm-mxp-fs 0 sm-mxp-ch dup 43 eq exch 45 eq or { /sm-mxp-fp 1 def } if
+  /sm-mxp-fq sm-mxp-fs sm-mxp-fp sm-mxp-digits def /sm-mxp-fnd sm-mxp-fq sm-mxp-fp sub def
+  sm-mxp-fs sm-mxp-fq sm-mxp-ch 46 eq {
+    /sm-mxp-fr sm-mxp-fs sm-mxp-fq 1 add sm-mxp-digits def
+    /sm-mxp-fnd sm-mxp-fnd sm-mxp-fr sm-mxp-fq sub 1 sub add def /sm-mxp-fq sm-mxp-fr def } if
+  sm-mxp-fnd 0 gt {
+    sm-mxp-fs sm-mxp-fq sm-mxp-ch dup 101 eq exch 69 eq or {
+      /sm-mxp-fr sm-mxp-fq 1 add def
+      sm-mxp-fs sm-mxp-fr sm-mxp-ch dup 43 eq exch 45 eq or { /sm-mxp-fr sm-mxp-fr 1 add def } if
+      sm-mxp-fs sm-mxp-fr sm-mxp-digits dup sm-mxp-fr gt { /sm-mxp-fq exch def } { pop } ifelse } if
+    sm-mxp-fs 0 sm-mxp-fq sm-mxp-sub
+    dup (+) sm-mxp-pre { 1 sm-mxp-tail } if
+    dup (.) sm-mxp-pre { (0) exch sm-mxp-cat } if
+    dup (-.) sm-mxp-pre { 1 sm-mxp-tail (-0) exch sm-mxp-cat } if
+    dup dup length 1 sub get 46 eq { (0) sm-mxp-cat } if
+    cvr dup dup round eq 1 index abs 1000000000 lt and { cvi } if
+  } { null } ifelse
+} bind def
+
+% ================================================================ fractions
+/sm-mxp-gcd { abs exch abs exch { dup 0 eq { pop exit } if dup 3 1 roll mod } loop dup 0 eq { pop 1 } if } bind def
+% n d sm-mxp-F [n d]  reduced, d > 0
+/sm-mxp-F {
+  dup 0 lt { neg exch neg exch } if
+  2 copy sm-mxp-gcd dup 3 1 roll idiv 3 1 roll idiv exch 2 array astore
+} bind def
+/sm-mxp-fadd { /sm-mxp-fb exch def /sm-mxp-fa exch def
+  sm-mxp-fa 0 get sm-mxp-fb 1 get mul sm-mxp-fb 0 get sm-mxp-fa 1 get mul add
+  sm-mxp-fa 1 get sm-mxp-fb 1 get mul sm-mxp-F } bind def
+/sm-mxp-fsub { /sm-mxp-fb exch def /sm-mxp-fa exch def
+  sm-mxp-fa 0 get sm-mxp-fb 1 get mul sm-mxp-fb 0 get sm-mxp-fa 1 get mul sub
+  sm-mxp-fa 1 get sm-mxp-fb 1 get mul sm-mxp-F } bind def
+/sm-mxp-fmul { /sm-mxp-fb exch def /sm-mxp-fa exch def
+  sm-mxp-fa 0 get sm-mxp-fb 0 get mul sm-mxp-fa 1 get sm-mxp-fb 1 get mul sm-mxp-F } bind def
+/sm-mxp-fcmp { /sm-mxp-fb exch def /sm-mxp-fa exch def      % a b -> sign of a - b
+  sm-mxp-fa 0 get sm-mxp-fb 1 get mul sm-mxp-fb 0 get sm-mxp-fa 1 get mul sub } bind def
+/sm-mxp-feq { 2 copy 0 get exch 0 get eq 3 1 roll 1 get exch 1 get eq and } bind def
+/sm-mxp-fcopy { aload pop sm-mxp-F } bind def
+
+% ================================================================ XML
+% A node: << /name (tag) /attrs << (key) (value) ... >> /children [nodes] /text (text) >>
+% (parseXML's { name, attrs, children, text }). Text is the decoded character
+% data of every non-blank text run plus CDATA sections, untrimmed.
+/sm-mxp-newel { % name -> node
+  << /name 3 -1 roll /attrs 4 dict /kids sm-mxp-lnew /text () >>
+  sm-mxp-all 1 index sm-mxp-lpush
+} bind def
+/sm-mxp-addtext { % node string -> -
+  1 index /text get exch sm-mxp-cat /text exch put
+} bind def
+/sm-mxp-top { sm-mxp-stk sm-mxp-llast } bind def
+/sm-mxp-fail { /sm-mxp-errmsg exch def stop } bind def
+
+% cp sm-mxp-utf8 - : append code point cp to sm-mxp-dsb as UTF-8 (U+FFFD
+% for a lone surrogate or a value past U+10FFFF)
+/sm-mxp-utf8 {
+  dup 16#D800 ge 1 index 16#DFFF le and 1 index 16#10FFFF gt or { pop 16#FFFD } if
+  dup 16#80 lt { sm-mxp-dsb exch sm-mxp-sbputc } {
+  dup 16#800 lt { dup -6 bitshift 16#C0 or sm-mxp-dsb exch sm-mxp-sbputc 63 and 128 or sm-mxp-dsb exch sm-mxp-sbputc } {
+  dup 16#10000 lt { dup -12 bitshift 16#E0 or sm-mxp-dsb exch sm-mxp-sbputc
+      dup -6 bitshift 63 and 128 or sm-mxp-dsb exch sm-mxp-sbputc 63 and 128 or sm-mxp-dsb exch sm-mxp-sbputc } {
+    dup -18 bitshift 16#F0 or sm-mxp-dsb exch sm-mxp-sbputc
+    dup -12 bitshift 63 and 128 or sm-mxp-dsb exch sm-mxp-sbputc
+    dup -6 bitshift 63 and 128 or sm-mxp-dsb exch sm-mxp-sbputc 63 and 128 or sm-mxp-dsb exch sm-mxp-sbputc
+  } ifelse } ifelse } ifelse
+} bind def
+/sm-mxp-ents << (amp) 38 (lt) 60 (gt) 62 (quot) 34 (apos) 39 >> def
+% s p sm-mxp-entity next true | false : the reference &...; at p, decoded onto
+% sm-mxp-dsb (an unknown name is copied as it is), as decode()'s regex
+% /&(#x[0-9a-fA-F]+|#\d+|\w+);/ does
+/sm-mxp-entity {
+  /sm-mxp-ep exch def /sm-mxp-es exch def
+  /sm-mxp-eq sm-mxp-ep 1 add def /sm-mxp-eok false def
+  sm-mxp-es sm-mxp-eq sm-mxp-ch 35 eq {
+    sm-mxp-es sm-mxp-eq 1 add sm-mxp-ch 120 eq {
+      /sm-mxp-er sm-mxp-eq 2 add def
+      { sm-mxp-es sm-mxp-er sm-mxp-ch sm-mxp-ishex { /sm-mxp-er sm-mxp-er 1 add def } { exit } ifelse } loop
+      sm-mxp-er sm-mxp-eq 2 add gt { sm-mxp-es sm-mxp-er sm-mxp-ch 59 eq } { false } ifelse {
+        0 sm-mxp-es sm-mxp-eq 2 add sm-mxp-er sm-mxp-sub {
+          dup 57 le { 48 sub } { 32 or 87 sub } ifelse exch 16 mul add 16#110000 min } forall
+        sm-mxp-utf8 /sm-mxp-eok true def } if
+    } if
+    sm-mxp-eok not {
+      /sm-mxp-er sm-mxp-es sm-mxp-eq 1 add sm-mxp-digits def
+      sm-mxp-er sm-mxp-eq 1 add gt { sm-mxp-es sm-mxp-er sm-mxp-ch 59 eq } { false } ifelse {
+        0 sm-mxp-es sm-mxp-eq 1 add sm-mxp-er sm-mxp-sub { 48 sub exch 10 mul add 16#110000 min } forall
+        sm-mxp-utf8 /sm-mxp-eok true def } if
+    } if
+  } {
+    /sm-mxp-er sm-mxp-eq def
+    { sm-mxp-es sm-mxp-er sm-mxp-ch sm-mxp-isword { /sm-mxp-er sm-mxp-er 1 add def } { exit } ifelse } loop
+    sm-mxp-er sm-mxp-eq gt { sm-mxp-es sm-mxp-er sm-mxp-ch 59 eq } { false } ifelse {
+      sm-mxp-es sm-mxp-eq sm-mxp-er sm-mxp-sub dup sm-mxp-ents exch known
+      { sm-mxp-ents exch get sm-mxp-dsb exch sm-mxp-sbputc }
+      { pop sm-mxp-dsb sm-mxp-es sm-mxp-ep sm-mxp-er 1 add sm-mxp-sub sm-mxp-sbputs } ifelse
+      /sm-mxp-eok true def } if
+  } ifelse
+  sm-mxp-eok { sm-mxp-er 1 add true } { false } ifelse
+} bind def
+/sm-mxp-dsb sm-mxp-sbnew def
+% s sm-mxp-decode s'  (a new string)
+/sm-mxp-decode {
+  /sm-mxp-ds exch def
+  sm-mxp-ds (&) sm-mxp-has not { sm-mxp-ds sm-mxp-copy } {
+    sm-mxp-dsb sm-mxp-sbclear /sm-mxp-di 0 def
+    { sm-mxp-ds sm-mxp-di (&) sm-mxp-find /sm-mxp-dj exch def
+      sm-mxp-dj 0 lt { sm-mxp-dsb sm-mxp-ds sm-mxp-di sm-mxp-tail sm-mxp-sbputs exit } if
+      sm-mxp-dsb sm-mxp-ds sm-mxp-di sm-mxp-dj sm-mxp-sub sm-mxp-sbputs
+      sm-mxp-ds sm-mxp-dj sm-mxp-entity
+      { /sm-mxp-di exch def } { sm-mxp-dsb 38 sm-mxp-sbputc /sm-mxp-di sm-mxp-dj 1 add def } ifelse
+    } loop
+    sm-mxp-dsb sm-mxp-sbstr
+  } ifelse
+} bind def
+
+% s sm-mxp-attrs - : the attributes in s into sm-mxp-el /attrs, as the regex
+% /([^\s=]+)\s*=\s*("([^"]*)"|'([^']*)')/g finds them (a later one wins)
+/sm-mxp-attrs {
+  /sm-mxp-as exch def /sm-mxp-ap 0 def /sm-mxp-an sm-mxp-as length def
+  { sm-mxp-ap sm-mxp-an ge { exit } if
+    sm-mxp-as sm-mxp-ap sm-mxp-wsf dup 0 gt { sm-mxp-ap add /sm-mxp-ap exch def } {
+      pop sm-mxp-as sm-mxp-ap get 61 eq { /sm-mxp-ap sm-mxp-ap 1 add def } {
+        % a name: the run of [^\s=]
+        /sm-mxp-aq sm-mxp-ap def
+        { sm-mxp-aq sm-mxp-an ge { exit } if
+          sm-mxp-as sm-mxp-aq get 61 eq sm-mxp-as sm-mxp-aq sm-mxp-wsf 0 gt or { exit } if
+          /sm-mxp-aq sm-mxp-aq 1 add def } loop
+        /sm-mxp-ar sm-mxp-aq def
+        { sm-mxp-as sm-mxp-ar sm-mxp-wsf dup 0 eq { pop exit } if sm-mxp-ar add /sm-mxp-ar exch def } loop
+        /sm-mxp-aok false def
+        sm-mxp-as sm-mxp-ar sm-mxp-ch 61 eq {
+          /sm-mxp-ar sm-mxp-ar 1 add def
+          { sm-mxp-as sm-mxp-ar sm-mxp-wsf dup 0 eq { pop exit } if sm-mxp-ar add /sm-mxp-ar exch def } loop
+          /sm-mxp-aqc sm-mxp-as sm-mxp-ar sm-mxp-ch def
+          sm-mxp-aqc 34 eq sm-mxp-aqc 39 eq or {
+            /sm-mxp-ae sm-mxp-as sm-mxp-ar 1 add sm-mxp-aqc 1 string dup 0 4 -1 roll put sm-mxp-find def
+            sm-mxp-ae 0 ge {
+              sm-mxp-el /attrs get sm-mxp-as sm-mxp-ap sm-mxp-aq sm-mxp-sub
+              sm-mxp-as sm-mxp-ar 1 add sm-mxp-ae sm-mxp-sub sm-mxp-decode put
+              /sm-mxp-ap sm-mxp-ae 1 add def /sm-mxp-aok true def } if
+          } if
+        } if
+        sm-mxp-aok not { /sm-mxp-ap sm-mxp-aq def } if
+      } ifelse
+    } ifelse
+  } loop
+} bind def
+
+% body sm-mxp-tag - : one tag, <body>
+/sm-mxp-tag {
+  /sm-mxp-bd exch def
+  sm-mxp-bd 0 sm-mxp-ch 47 eq {
+    /sm-mxp-cn sm-mxp-bd 1 sm-mxp-tail sm-mxp-trim def
+    /sm-mxp-ctop sm-mxp-stk sm-mxp-lpop def
+    sm-mxp-ctop null eq { true } { sm-mxp-ctop /name get sm-mxp-cn ne } ifelse {
+      (malformed XML: </) sm-mxp-cn sm-mxp-cat (> does not close <) sm-mxp-cat
+      sm-mxp-ctop null eq { (undefined) } { sm-mxp-ctop /name get } ifelse sm-mxp-cat (>) sm-mxp-cat sm-mxp-fail } if
+  } {
+    /sm-mxp-self sm-mxp-bd length 0 gt { sm-mxp-bd dup length 1 sub get 47 eq } { false } ifelse def
+    /sm-mxp-k 0 def
+    { sm-mxp-k sm-mxp-bd length ge { exit } if
+      sm-mxp-bd sm-mxp-k get dup 47 eq exch 62 eq or sm-mxp-bd sm-mxp-k sm-mxp-wsf 0 gt or { exit } if
+      /sm-mxp-k sm-mxp-k 1 add def } loop
+    sm-mxp-k 0 eq { (malformed XML: <) sm-mxp-bd sm-mxp-cat (> has no element name) sm-mxp-cat sm-mxp-fail } if
+    /sm-mxp-el sm-mxp-bd 0 sm-mxp-k sm-mxp-sub sm-mxp-copy sm-mxp-newel def
+    sm-mxp-bd sm-mxp-k sm-mxp-bd length sm-mxp-self { 1 sub } if sm-mxp-sub sm-mxp-attrs
+    sm-mxp-top /kids get sm-mxp-el sm-mxp-lpush
+    sm-mxp-self not { sm-mxp-stk sm-mxp-el sm-mxp-lpush } if
+  } ifelse
+} bind def
+
+% src sm-mxp-xml root : parseXML
+/sm-mxp-xml {
+  /sm-mxp-x exch def /sm-mxp-xn sm-mxp-x length def
+  /sm-mxp-all sm-mxp-lnew def
+  /sm-mxp-root (#root) sm-mxp-newel def
+  /sm-mxp-stk sm-mxp-lnew def sm-mxp-stk sm-mxp-root sm-mxp-lpush
+  /sm-mxp-xi 0 def
+  { sm-mxp-xi sm-mxp-xn ge { exit } if
+    /sm-mxp-lt sm-mxp-x sm-mxp-xi (<) sm-mxp-find def
+    sm-mxp-lt 0 lt { exit } if
+    sm-mxp-lt sm-mxp-xi gt {
+      sm-mxp-x sm-mxp-xi sm-mxp-lt sm-mxp-sub dup sm-mxp-trim length 0 gt
+      { sm-mxp-decode sm-mxp-top exch sm-mxp-addtext } { pop } ifelse } if
+    /sm-mxp-rest sm-mxp-x sm-mxp-lt sm-mxp-tail def
+    { sm-mxp-rest (<!--) sm-mxp-pre {
+        sm-mxp-x sm-mxp-lt (-->) sm-mxp-find dup 0 lt { pop /sm-mxp-xi sm-mxp-xn def } { 3 add /sm-mxp-xi exch def } ifelse
+        exit } if
+      sm-mxp-rest (<![CDATA[) sm-mxp-pre {
+        /sm-mxp-ce sm-mxp-x sm-mxp-lt (]]>) sm-mxp-find def
+        sm-mxp-ce 0 lt { sm-mxp-top sm-mxp-x sm-mxp-lt 9 add sm-mxp-tail sm-mxp-addtext /sm-mxp-xi sm-mxp-xn def }
+        { sm-mxp-top sm-mxp-x sm-mxp-lt 9 add sm-mxp-ce sm-mxp-sub sm-mxp-addtext /sm-mxp-xi sm-mxp-ce 3 add def } ifelse
+        exit } if
+      sm-mxp-rest (<?) sm-mxp-pre {
+        sm-mxp-x sm-mxp-lt (?>) sm-mxp-find dup 0 lt { pop /sm-mxp-xi sm-mxp-xn def } { 2 add /sm-mxp-xi exch def } ifelse
+        exit } if
+      sm-mxp-rest (<!) sm-mxp-pre {
+        % DOCTYPE, possibly with an internal subset [ ... ]
+        /sm-mxp-j sm-mxp-lt 2 add def /sm-mxp-dep 0 def
+        { sm-mxp-j sm-mxp-xn ge { exit } if
+          /sm-mxp-c sm-mxp-x sm-mxp-j get def
+          sm-mxp-c 91 eq { /sm-mxp-dep sm-mxp-dep 1 add def } {
+            sm-mxp-c 93 eq { /sm-mxp-dep sm-mxp-dep 1 sub def } {
+              sm-mxp-c 62 eq sm-mxp-dep 0 le and { exit } if } ifelse } ifelse
+          /sm-mxp-j sm-mxp-j 1 add def } loop
+        /sm-mxp-xi sm-mxp-j 1 add def exit } if
+      /sm-mxp-gt sm-mxp-x sm-mxp-lt (>) sm-mxp-find def
+      sm-mxp-gt 0 lt { (malformed XML: unterminated tag) sm-mxp-fail } if
+      /sm-mxp-xi sm-mxp-gt 1 add def
+      sm-mxp-x sm-mxp-lt 1 add sm-mxp-gt sm-mxp-sub sm-mxp-tag
+      exit
+    } loop
+  } loop
+  sm-mxp-all sm-mxp-larr { dup dup /kids get sm-mxp-larr /children exch put /kids undef } forall
+  sm-mxp-root
+} bind def
+
+% node access (a null node has no children, no text)
+/sm-mxp-kid { % node name -> node|null
+  exch dup null eq { pop pop null } {
+    /children get null exch { dup /name get 3 index eq { exch pop exit } { pop } ifelse } forall exch pop
+  } ifelse
+} bind def
+/sm-mxp-kids { % node name -> [nodes]
+  /sm-mxp-kn exch def dup null eq { pop [] } {
+    /children get [ exch { dup /name get sm-mxp-kn ne { pop } if } forall ] } ifelse
+} bind def
+/sm-mxp-txt { sm-mxp-kid dup null eq { pop () } { /text get sm-mxp-trim sm-mxp-copy } ifelse } bind def  % node name -> s
+/sm-mxp-ttext { /text get sm-mxp-trim sm-mxp-copy } bind def                                            % node -> s
+/sm-mxp-attr { exch /attrs get exch 2 copy known { get } { pop pop null } ifelse } bind def                   % node key -> s|null
+/sm-mxp-attris { 3 1 roll sm-mxp-attr dup null eq { pop pop false } { eq } ifelse } bind def                      % node key value -> bool
+% nodes name sm-mxp-anykid bool : does any node have a child of that name
+/sm-mxp-anykid { /sm-mxp-akn exch def false exch { sm-mxp-akn sm-mxp-kid null ne or } forall } bind def
+% [nodes] name sm-mxp-kidsof [children of that name of all of them]
+/sm-mxp-kidsof { /sm-mxp-kon exch def [ exch { sm-mxp-kon sm-mxp-kids aload pop } forall ] } bind def
+% [nodes] name type sm-mxp-anytype bool : a child of that name with attribute type="type"
+/sm-mxp-anytype {
+  /sm-mxp-aty exch def sm-mxp-kidsof false exch { (type) sm-mxp-aty sm-mxp-attris or } forall
+} bind def
+
+% ================================================================ tables
+/sm-mxp-types << (maxima) [8 1] (long) [4 1] (breve) [2 1] (whole) [1 1] (half) [1 2] (quarter) [1 4]
+  (eighth) [1 8] (16th) [1 16] (32nd) [1 32] (64th) [1 64] (128th) [1 128] >> def
+/sm-mxp-typeorder [ [8 1] [4 1] [2 1] [1 1] [1 2] [1 4] [1 8] [1 16] [1 32] [1 64] [1 128] ] def
+/sm-mxp-accs << (sharp) (sharp) (flat) (flat) (natural) (natural) (double-sharp) (dsharp)
+  (sharp-sharp) (dsharp) (flat-flat) (dflat) >> def
+/sm-mxp-kinds << (major) () (minor) (m) (augmented) (aug) (diminished) (dim) (dominant) (7)
+  (major-seventh) (maj7) (minor-seventh) (m7) (diminished-seventh) (dim7) (augmented-seventh) (aug7)
+  (half-diminished) (m7b5) (major-minor) (m\(maj7\)) (major-sixth) (6) (minor-sixth) (m6)
+  (dominant-ninth) (9) (major-ninth) (maj9) (minor-ninth) (m9) (dominant-11th) (11) (dominant-13th) (13)
+  (suspended-second) (sus2) (suspended-fourth) (sus4) (power) (5) (none) () >> def
+/sm-mxp-artic << (staccato) (staccato) (accent) (accent) (tenuto) (tenuto) (strong-accent) (marcato)
+  (staccatissimo) (staccato) >> def
+/sm-mxp-orn << (trill-mark) (trill) (mordent) (lowermordent) (inverted-mordent) (uppermordent) (turn) (roll) >> def
+/sm-mxp-lookup { 2 copy known { get } { pop pop null } ifelse } bind def   % dict key -> v|null
+
+% ================================================================ warnings
+/sm-mxp-warn { % (text) -> : once per text
+  false sm-mxp-warns sm-mxp-larr { 2 index eq or } forall
+  { pop } { sm-mxp-warns exch sm-mxp-lpush } ifelse
+} bind def
+
+% ================================================================ mapping
+/sm-mxp-newmeasure { << /events sm-mxp-lnew /startRepeat false /endBar null /lineBreak false >> } bind def
+% node sm-mxp-staffof s : the 0-based staff of a note/direction/harmony
+/sm-mxp-staffof {
+  (staff) sm-mxp-txt (1) sm-mxp-intd dup 0 eq { pop 1 } if 1 max sm-mxp-ns min 1 sub
+} bind def
+% step sm-mxp-keyalter -1|0|1 : what the key signature does to a step
+/sm-mxp-keyalter {
+  dup length 0 eq { pop 0 } { (FCGDAEB) exch search { length 3 1 roll pop pop } { pop -1 } ifelse } ifelse
+  /sm-mxp-kk exch def
+  sm-mxp-fifths 0 gt sm-mxp-kk sm-mxp-fifths lt and { 1 } {
+    sm-mxp-fifths 0 lt 6 sm-mxp-kk sub sm-mxp-fifths neg lt and { -1 } { 0 } ifelse } ifelse
+} bind def
+% a sm-mxp-alt (#)|(b)|()  : root-alter / bass-alter
+/sm-mxp-alt { dup (1) eq { pop (#) } { (-1) eq { (b) } { () } ifelse } ifelse } bind def
+% for each staff measure of this measure (staff s of this part)
+/sm-mxp-prevbreak { % - : lineBreak on the previous measure of each staff of the part
+  sm-mxp-mi 0 gt { 0 1 sm-mxp-ns 1 sub {
+    sm-mxp-sms exch sm-mxp-base add sm-mxp-lget sm-mxp-mi 1 sub sm-mxp-lat
+    dup null eq { pop } { /lineBreak true put } ifelse } for } if
+} bind def
+/sm-mxp-adddeco { % ev (name) -> -
+  1 index /decos known not { 1 index /decos sm-mxp-lnew put } if
+  exch /decos get exch sm-mxp-lpush
+} bind def
+
+% ---------------------------------------------------------------- <attributes>
+/sm-mxp-attributes {
+  sm-mxp-el (divisions) sm-mxp-txt dup length 0 gt { sm-mxp-int dup null eq { pop 1 } if /sm-mxp-div exch def } { pop } ifelse
+  /sm-mxp-ak sm-mxp-el (key) sm-mxp-kid def
+  sm-mxp-ak null ne { sm-mxp-ak (fifths) sm-mxp-txt length 0 gt } { false } ifelse {
+    /sm-mxp-fifths sm-mxp-ak (fifths) sm-mxp-txt (0) sm-mxp-intd def
+    sm-mxp-mi 0 eq sm-mxp-fkey null eq and { /sm-mxp-fkey << /fifths sm-mxp-fifths >> def }
+    { sm-mxp-ms { /key << /fifths sm-mxp-fifths >> put } forall } ifelse
+  } if
+  /sm-mxp-at sm-mxp-el (time) sm-mxp-kid def
+  sm-mxp-at null ne {
+    /sm-mxp-abeats sm-mxp-at (beats) sm-mxp-txt def
+    /sm-mxp-anum 0 def /sm-mxp-arest sm-mxp-abeats def
+    { sm-mxp-arest (+) search {
+        exch pop sm-mxp-int dup null eq { pop 0 } if sm-mxp-anum add /sm-mxp-anum exch def /sm-mxp-arest exch def }
+      { sm-mxp-int dup null eq { pop 0 } if sm-mxp-anum add /sm-mxp-anum exch def exit } ifelse } loop
+    /sm-mxp-time << /num sm-mxp-anum /den sm-mxp-at (beat-type) sm-mxp-txt (0) sm-mxp-intd >> def
+    sm-mxp-abeats (+) sm-mxp-has { sm-mxp-time /text sm-mxp-abeats put } if
+    sm-mxp-at (symbol) (common) sm-mxp-attris { sm-mxp-time /symbol (common) put } if
+    sm-mxp-at (symbol) (cut) sm-mxp-attris { sm-mxp-time /symbol (cut) put } if
+    sm-mxp-at (senza-misura) sm-mxp-kid null ne { /sm-mxp-time << /num 0 /den 0 /symbol (none) >> def } if
+    sm-mxp-mi 0 eq sm-mxp-ftime null eq and { /sm-mxp-ftime sm-mxp-time def }
+    { sm-mxp-ms { /time sm-mxp-time put } forall } ifelse
+  } if
+  sm-mxp-el (clef) sm-mxp-kids { /sm-mxp-ac exch def
+    /sm-mxp-acs sm-mxp-ac (number) sm-mxp-attr dup null eq { pop (1) } if sm-mxp-int dup null eq { pop 1 } if
+      sm-mxp-ns min 1 sub 0 max def
+    /sm-mxp-asign sm-mxp-ac (sign) sm-mxp-txt def
+    /sm-mxp-aclef << /sign sm-mxp-asign dup length 0 eq { pop (G) } if
+      /line sm-mxp-ac (line) sm-mxp-txt sm-mxp-asign (F) eq { (4) } { sm-mxp-asign (C) eq { (3) } { (2) } ifelse } ifelse sm-mxp-intd
+      /octave sm-mxp-ac (clef-octave-change) sm-mxp-txt (0) sm-mxp-intd >> def
+    sm-mxp-aclef /sign get dup (percussion) eq exch (TAB) eq or {
+      sm-mxp-aclef /sign get ( clefs are drawn as treble) sm-mxp-cat sm-mxp-warn
+      sm-mxp-aclef /sign (G) put sm-mxp-aclef /line 2 put } if
+    sm-mxp-mi 0 eq sm-mxp-cursor 0 get 0 eq and
+    { sm-mxp-staves sm-mxp-base sm-mxp-acs add sm-mxp-lget /clef sm-mxp-aclef put }
+    { sm-mxp-ms sm-mxp-acs get /clef sm-mxp-aclef put } ifelse
+  } forall
+} bind def
+
+% ---------------------------------------------------------------- <backup> <forward> <print> <barline>
+/sm-mxp-dur { (duration) sm-mxp-txt (0) sm-mxp-intd sm-mxp-div 4 mul sm-mxp-F } bind def   % node -> frac
+/sm-mxp-backup { /sm-mxp-cursor sm-mxp-cursor sm-mxp-el sm-mxp-dur sm-mxp-fsub def } bind def
+/sm-mxp-forward { /sm-mxp-cursor sm-mxp-cursor sm-mxp-el sm-mxp-dur sm-mxp-fadd def } bind def
+/sm-mxp-print {
+  sm-mxp-el (new-system) (yes) sm-mxp-attris sm-mxp-el (new-page) (yes) sm-mxp-attris or { sm-mxp-prevbreak } if
+} bind def
+/sm-mxp-barline {
+  /sm-mxp-bloc sm-mxp-el (location) sm-mxp-attr dup null eq { pop (right) } if def
+  /sm-mxp-bstyle sm-mxp-el (bar-style) sm-mxp-txt def
+  /sm-mxp-brep sm-mxp-el (repeat) sm-mxp-kid def
+  /sm-mxp-bend sm-mxp-el (ending) sm-mxp-kid def
+  sm-mxp-ms { /sm-mxp-bm exch def
+    sm-mxp-bloc (left) eq {
+      sm-mxp-brep null ne { sm-mxp-brep (direction) (forward) sm-mxp-attris } { false } ifelse
+      { sm-mxp-bm /startRepeat true put } if
+      sm-mxp-bend null ne { sm-mxp-bend (type) (start) sm-mxp-attris } { false } ifelse {
+        sm-mxp-bend sm-mxp-ttext dup length 0 eq { pop sm-mxp-bend (number) sm-mxp-attr dup null eq { pop () } if } if
+        dup length 0 gt { dup dup length 1 sub get 46 eq { 0 1 index length 1 sub getinterval } if } if
+        sm-mxp-copy sm-mxp-bm exch /sm-mxp-blabel exch def /ending << /label sm-mxp-blabel >> put } if
+    } {
+      sm-mxp-brep null ne { sm-mxp-brep (direction) (backward) sm-mxp-attris } { false } ifelse
+      { sm-mxp-bm /endBar (repeat-end) put } {
+        sm-mxp-bstyle (light-heavy) eq { sm-mxp-bm /endBar (final) put } {
+        sm-mxp-bstyle (light-light) eq { sm-mxp-bm /endBar (double) put } {
+        sm-mxp-bstyle (heavy-light) eq { sm-mxp-bm /endBar (thick-thin) put } if } ifelse } ifelse } ifelse
+    } ifelse
+  } forall
+} bind def
+
+% ---------------------------------------------------------------- <harmony>
+/sm-mxp-harmony {
+  /sm-mxp-hs sm-mxp-el sm-mxp-staffof def
+  /sm-mxp-hroot sm-mxp-el (root) sm-mxp-kid def
+  sm-mxp-hroot null ne {
+    /sm-mxp-hkd sm-mxp-el (kind) sm-mxp-kid def
+    sm-mxp-hroot (root-step) sm-mxp-txt sm-mxp-hroot (root-alter) sm-mxp-txt sm-mxp-alt sm-mxp-cat
+    sm-mxp-hkd null ne { sm-mxp-hkd (text) sm-mxp-attr } { null } ifelse dup null ne { sm-mxp-cat } {
+      pop sm-mxp-kinds sm-mxp-hkd null eq { () } { sm-mxp-hkd sm-mxp-ttext } ifelse sm-mxp-lookup
+      dup null eq { pop () } if sm-mxp-cat } ifelse
+    /sm-mxp-hbass sm-mxp-el (bass) sm-mxp-kid def
+    sm-mxp-hbass null ne { (/) sm-mxp-cat sm-mxp-hbass (bass-step) sm-mxp-txt sm-mxp-cat
+      sm-mxp-hbass (bass-alter) sm-mxp-txt sm-mxp-alt sm-mxp-cat } if
+    sm-mxp-pend sm-mxp-hs get exch /chord exch put
+  } if
+} bind def
+
+% ---------------------------------------------------------------- <direction>
+/sm-mxp-direction {
+  /sm-mxp-ds2 sm-mxp-el sm-mxp-staffof def
+  /sm-mxp-dp sm-mxp-pend sm-mxp-ds2 get def
+  /sm-mxp-dabove sm-mxp-el (placement) (below) sm-mxp-attris not def
+  /sm-mxp-ddts sm-mxp-el (direction-type) sm-mxp-kids def
+  sm-mxp-ddts { /children get { /sm-mxp-dc exch def
+    /sm-mxp-dcn sm-mxp-dc /name get def
+    sm-mxp-dcn (words) eq { sm-mxp-dc sm-mxp-ttext length 0 gt } { false } ifelse {
+      sm-mxp-dp /words get << /text sm-mxp-dc sm-mxp-ttext /pos sm-mxp-dabove { (above) } { (below) } ifelse
+        /italic sm-mxp-dc (font-style) (italic) sm-mxp-attris >> sm-mxp-lpush } {
+    sm-mxp-dcn (dynamics) eq {
+      sm-mxp-dc /children get dup length 0 gt { 0 get dup /name get (other-dynamics) eq { sm-mxp-ttext } { /name get sm-mxp-copy } ifelse
+        sm-mxp-dp exch /dyn exch put } { pop } ifelse } {
+    sm-mxp-dcn (wedge) eq {
+      sm-mxp-dc (type) (stop) sm-mxp-attris { sm-mxp-dp /he true put }
+      { sm-mxp-dp /hs sm-mxp-dc (type) (crescendo) sm-mxp-attris { (cresc) } { (dim) } ifelse put } ifelse } {
+    sm-mxp-dcn (metronome) eq sm-mxp-score /tempo get null eq and {
+      /sm-mxp-dbu sm-mxp-types sm-mxp-dc (beat-unit) sm-mxp-txt sm-mxp-lookup def
+      /sm-mxp-dpm sm-mxp-dc (per-minute) sm-mxp-txt sm-mxp-int def
+      sm-mxp-dbu null ne sm-mxp-dpm null ne and { sm-mxp-dpm 0 ne } { false } ifelse {
+        sm-mxp-score /tempo << /text () /beat sm-mxp-dbu sm-mxp-dc (beat-unit-dot) sm-mxp-kids length 0 gt { [3 2] sm-mxp-fmul } { sm-mxp-fcopy } ifelse
+          /bpm sm-mxp-dpm >> put } if } {
+    sm-mxp-dcn (segno) eq { sm-mxp-dp /decos get (segno) sm-mxp-lpush } {
+    sm-mxp-dcn (coda) eq { sm-mxp-dp /decos get (coda) sm-mxp-lpush } if
+    } ifelse } ifelse } ifelse } ifelse } ifelse
+  } forall } forall
+  /sm-mxp-dsnd sm-mxp-el (sound) sm-mxp-kid def
+  sm-mxp-dsnd null ne { sm-mxp-dsnd (tempo) sm-mxp-attr dup null ne { length 0 gt } { pop false } ifelse } { false } ifelse
+  sm-mxp-score /tempo get null eq and {
+    sm-mxp-score /tempo << /text () /beat [1 4]
+      /bpm sm-mxp-dsnd (tempo) sm-mxp-attr sm-mxp-float dup null ne { round cvi } if >> put } if
+  % words given with the metronome mark in one direction are its text ("Allegro")
+  sm-mxp-ddts (metronome) sm-mxp-anykid {
+    /sm-mxp-dwh [ sm-mxp-ddts (words) sm-mxp-kidsof { dup sm-mxp-ttext length 0 eq { pop } if } forall ] def
+    sm-mxp-dwh length 0 gt sm-mxp-score /tempo get null ne and {
+      sm-mxp-score /tempo get /text get length 0 eq } { false } ifelse {
+      sm-mxp-score /tempo get /text () sm-mxp-dwh { sm-mxp-ttext exch dup length 0 gt { ( ) sm-mxp-cat } if exch sm-mxp-cat } forall put
+      /sm-mxp-dkeep sm-mxp-lnew def
+      sm-mxp-dp /words get sm-mxp-larr { /sm-mxp-dw exch def
+        false sm-mxp-dwh { sm-mxp-ttext sm-mxp-dw /text get eq or } forall
+        not { sm-mxp-dkeep sm-mxp-dw sm-mxp-lpush } if } forall
+      sm-mxp-dp /words sm-mxp-dkeep put
+    } if
+  } if
+} bind def
+
+% ---------------------------------------------------------------- <note>
+/sm-mxp-spacer { % dur -> ev
+  /sm-mxp-spd exch def
+  << /kind (rest) /notes sm-mxp-lnew /dur sm-mxp-spd /type [1 4] /dots 0 /rest << /invisible true >> /spacer true /beam false >>
+} bind def
+/sm-mxp-guesstype { % dur -> type
+  /sm-mxp-gd exch def
+  [1 4] sm-mxp-typeorder { dup sm-mxp-gd sm-mxp-feq { exch pop exit } { pop } ifelse } forall
+  sm-mxp-fcopy
+} bind def
+/sm-mxp-note { {
+  /sm-mxp-ns2 sm-mxp-el sm-mxp-staffof def
+  /sm-mxp-nchord sm-mxp-el (chord) sm-mxp-kid null ne def
+  /sm-mxp-ngrace sm-mxp-el (grace) sm-mxp-kid def
+  /sm-mxp-ndur sm-mxp-ngrace null ne { [0 1] } { sm-mxp-el sm-mxp-dur } ifelse def
+  /sm-mxp-nvoice sm-mxp-el (voice) sm-mxp-txt dup length 0 eq { pop (1) } if def
+  sm-mxp-voiceof sm-mxp-ns2 get null eq { sm-mxp-voiceof sm-mxp-ns2 sm-mxp-nvoice put } if
+  /sm-mxp-nonset sm-mxp-nchord { sm-mxp-lastonset sm-mxp-ns2 get dup null eq { pop sm-mxp-cursor } if } { sm-mxp-cursor } ifelse def
+  sm-mxp-nchord not { /sm-mxp-cursor sm-mxp-cursor sm-mxp-ndur sm-mxp-fadd def } if
+  sm-mxp-nvoice sm-mxp-voiceof sm-mxp-ns2 get ne {
+    (staff ) sm-mxp-base sm-mxp-ns2 add 1 add sm-mxp-itoa sm-mxp-cat
+    (: only one voice per staff is engraved; voice ) sm-mxp-cat sm-mxp-nvoice sm-mxp-cat ( was skipped) sm-mxp-cat sm-mxp-warn
+    exit } if
+  /sm-mxp-nevs sm-mxp-ms sm-mxp-ns2 get /events get def
+  /sm-mxp-npitch sm-mxp-el (pitch) sm-mxp-kid def
+  /sm-mxp-nnote sm-mxp-npitch null eq { null } {
+    << /step sm-mxp-npitch (step) sm-mxp-txt /oct sm-mxp-npitch (octave) sm-mxp-txt sm-mxp-int
+       /alter sm-mxp-npitch (alter) sm-mxp-txt dup length 0 eq { pop (0) } if sm-mxp-float /acc null /tie false >> } ifelse def
+  sm-mxp-npitch null eq sm-mxp-el (unpitched) sm-mxp-kid null ne and { (unpitched notes are drawn on the middle line) sm-mxp-warn } if
+  sm-mxp-nnote null ne {
+    /sm-mxp-na sm-mxp-el (accidental) sm-mxp-txt def
+    /sm-mxp-nkey sm-mxp-nnote /step get sm-mxp-nnote /oct get dup null eq { pop (NaN) } { sm-mxp-itoa } ifelse sm-mxp-cat def
+    /sm-mxp-nacc sm-mxp-accst sm-mxp-ns2 get def
+    /sm-mxp-nexp sm-mxp-nacc sm-mxp-nkey known { sm-mxp-nacc sm-mxp-nkey get } { sm-mxp-nnote /step get sm-mxp-keyalter } ifelse def
+    /sm-mxp-nalt sm-mxp-nnote /alter get def
+    sm-mxp-na length 0 gt { sm-mxp-nnote /acc sm-mxp-accs sm-mxp-na sm-mxp-lookup put } {
+      sm-mxp-nalt null ne { sm-mxp-nalt sm-mxp-nexp ne } { true } ifelse {
+        sm-mxp-nnote /acc
+          sm-mxp-nalt null eq { null } {
+          sm-mxp-nalt 1 eq { (sharp) } { sm-mxp-nalt -1 eq { (flat) } { sm-mxp-nalt 0 eq { (natural) } {
+          sm-mxp-nalt 2 eq { (dsharp) } { sm-mxp-nalt -2 eq { (dflat) } { null } ifelse } ifelse } ifelse } ifelse } ifelse } ifelse
+        put } if
+    } ifelse
+    sm-mxp-nacc sm-mxp-nkey sm-mxp-nalt put
+  } if
+  /sm-mxp-nnts sm-mxp-el (notations) sm-mxp-kids def
+  sm-mxp-nnote null ne {
+    sm-mxp-el (tie) sm-mxp-kids false exch { (type) (start) sm-mxp-attris or } forall
+    sm-mxp-nnts (tied) (start) sm-mxp-anytype or { sm-mxp-nnote /tie true put } if } if
+  sm-mxp-ngrace null ne {
+    % attach to the next main note on this staff
+    sm-mxp-nnote null ne {
+      /sm-mxp-np sm-mxp-pend sm-mxp-ns2 get def
+      sm-mxp-np /grace get null eq { sm-mxp-np /grace << /notes sm-mxp-lnew /slash sm-mxp-ngrace (slash) (yes) sm-mxp-attris >> put } if
+      sm-mxp-np /grace get /notes get sm-mxp-nnote sm-mxp-lpush } if
+    exit } if
+  sm-mxp-nchord {
+    sm-mxp-nevs /n get 0 gt sm-mxp-nnote null ne and {
+      sm-mxp-nevs sm-mxp-llast dup /kind get (note) eq { /notes get sm-mxp-nnote sm-mxp-lpush } { pop } ifelse } if
+    exit } if
+  % a gap in this voice (after backup/forward) becomes an invisible rest
+  sm-mxp-nonset sm-mxp-ends sm-mxp-ns2 get sm-mxp-fcmp 0 gt {
+    sm-mxp-nevs sm-mxp-nonset sm-mxp-ends sm-mxp-ns2 get sm-mxp-fsub sm-mxp-spacer sm-mxp-lpush } if
+  sm-mxp-ends sm-mxp-ns2 sm-mxp-nonset sm-mxp-ndur sm-mxp-fadd put
+  sm-mxp-lastonset sm-mxp-ns2 sm-mxp-nonset put
+  /sm-mxp-ntype sm-mxp-el (type) sm-mxp-txt def
+  /sm-mxp-nrest sm-mxp-el (rest) sm-mxp-kid def
+  /sm-mxp-nev << /kind sm-mxp-nnote null ne { (note) } { (rest) } ifelse /notes sm-mxp-lnew /dur sm-mxp-ndur /beam false >> def
+  sm-mxp-nnote null ne { sm-mxp-nev /notes get sm-mxp-nnote sm-mxp-lpush } if
+  sm-mxp-nrest null ne { sm-mxp-nrest (measure) (yes) sm-mxp-attris sm-mxp-ntype length 0 eq or } { false } ifelse {
+    sm-mxp-nev /type [1 1] put sm-mxp-nev /dots 0 put sm-mxp-nev /rest << /measure true /count 1 >> put
+  } {
+    sm-mxp-nev /type sm-mxp-types sm-mxp-ntype sm-mxp-lookup dup null eq { pop sm-mxp-ndur sm-mxp-guesstype } { sm-mxp-fcopy } ifelse put
+    sm-mxp-nev /dots sm-mxp-el (dot) sm-mxp-kids length put
+    sm-mxp-nrest null ne { sm-mxp-nev /rest 0 dict put } if
+  } ifelse
+  sm-mxp-nnote null eq sm-mxp-nrest null eq and { sm-mxp-nev /kind (rest) put sm-mxp-nev /rest 0 dict put } if
+  sm-mxp-el (unpitched) sm-mxp-kid null ne {
+    sm-mxp-nev /kind (note) put
+    sm-mxp-nev /notes sm-mxp-lnew dup << /step (B) /oct 4 /acc null /tie false >> sm-mxp-lpush put } if
+  % beams
+  null sm-mxp-el (beam) sm-mxp-kids { dup (number) sm-mxp-attr dup null eq { pop (1) } if (1) eq { exch pop exit } { pop } ifelse } forall
+  dup null ne { sm-mxp-ttext dup (continue) eq exch (end) eq or sm-mxp-nev exch /beam exch put } { pop } ifelse
+  % tuplets
+  /sm-mxp-ntm sm-mxp-el (time-modification) sm-mxp-kid def
+  sm-mxp-ntm null ne {
+    /sm-mxp-ntp sm-mxp-ntm (actual-notes) sm-mxp-txt sm-mxp-int def
+    /sm-mxp-ntq sm-mxp-ntm (normal-notes) sm-mxp-txt sm-mxp-int def
+    /sm-mxp-nprev null def
+    sm-mxp-nevs sm-mxp-larr { dup /spacer known { pop } { /sm-mxp-nprev exch def } ifelse } forall
+    sm-mxp-nnts (tuplet) (start) sm-mxp-anytype
+    sm-mxp-nprev null eq or
+    { true } { sm-mxp-nprev /tuplet known not { true } {
+        sm-mxp-nprev /tuplet get dup /closed known exch /p get sm-mxp-ntp ne or } ifelse } ifelse
+    { /sm-mxp-tupid sm-mxp-tupid 1 add def } if
+    sm-mxp-nev /tuplet << /id sm-mxp-tupid /p sm-mxp-ntp /q sm-mxp-ntq >> put
+    sm-mxp-nnts (tuplet) (stop) sm-mxp-anytype { sm-mxp-nev /tuplet get /closed true put } if
+  } if
+  % notations
+  sm-mxp-nnts { /sm-mxp-nt exch def
+    sm-mxp-nt (slur) sm-mxp-kids { /sm-mxp-nsl exch def
+      sm-mxp-nsl (type) (start) sm-mxp-attris {
+        sm-mxp-nev /slurStart sm-mxp-nev /slurStart known { sm-mxp-nev /slurStart get } { 0 } ifelse 1 add put } {
+      sm-mxp-nsl (type) (stop) sm-mxp-attris {
+        sm-mxp-nev /slurEnd sm-mxp-nev /slurEnd known { sm-mxp-nev /slurEnd get } { 0 } ifelse 1 add put } if } ifelse
+    } forall
+    sm-mxp-nt (fermata) sm-mxp-kid dup null ne {
+      (type) (inverted) sm-mxp-attris { (invertedfermata) } { (fermata) } ifelse sm-mxp-nev exch sm-mxp-adddeco } { pop } ifelse
+    [ sm-mxp-nt (articulations) sm-mxp-kids { /children get aload pop } forall ] {
+      /name get sm-mxp-artic exch sm-mxp-lookup dup null ne { sm-mxp-nev exch sm-mxp-adddeco } { pop } ifelse } forall
+    [ sm-mxp-nt (ornaments) sm-mxp-kids { /children get aload pop } forall ] {
+      /name get sm-mxp-orn exch sm-mxp-lookup dup null ne { sm-mxp-nev exch sm-mxp-adddeco } { pop } ifelse } forall
+    [ sm-mxp-nt (technical) sm-mxp-kids { /children get aload pop } forall ] {
+      /name get dup (up-bow) eq { pop sm-mxp-nev (upbow) sm-mxp-adddeco } {
+        (down-bow) eq { sm-mxp-nev (downbow) sm-mxp-adddeco } if } ifelse } forall
+    sm-mxp-nt (dynamics) sm-mxp-kid dup null ne { /children get dup length 0 gt {
+      0 get /name get sm-mxp-copy sm-mxp-nev exch /dyn exch put } { pop } ifelse } { pop } ifelse
+  } forall
+  % lyrics
+  sm-mxp-el (lyric) sm-mxp-kids { /sm-mxp-nly exch def
+    /sm-mxp-nlk sm-mxp-nly (number) sm-mxp-attr dup null eq { pop (1) } if sm-mxp-int
+      dup null eq { pop 1 } if dup 0 eq { pop 1 } if 1 max 1 sub def
+    /sm-mxp-nlt () sm-mxp-nly (text) sm-mxp-kids { /text get sm-mxp-cat } forall def
+    /sm-mxp-nls sm-mxp-nly (syllabic) sm-mxp-txt def
+    sm-mxp-nev /lyrics known not { sm-mxp-nev /lyrics sm-mxp-lnew put } if
+    /sm-mxp-nll sm-mxp-nev /lyrics get def
+    { sm-mxp-nll /n get sm-mxp-nlk gt { exit } if sm-mxp-nll null sm-mxp-lpush } loop
+    sm-mxp-nll /a get sm-mxp-nlk << /text sm-mxp-nlt /hyphen sm-mxp-nls (begin) eq sm-mxp-nls (middle) eq or
+      /extend sm-mxp-nly (extend) sm-mxp-kid null ne >> put
+  } forall
+  % pending directions and harmony go to this note
+  /sm-mxp-np sm-mxp-pend sm-mxp-ns2 get def
+  sm-mxp-np /chord get dup null ne { length 0 gt } { pop false } ifelse {
+    sm-mxp-nev /chord sm-mxp-np /chord get put sm-mxp-np /chord null put } if
+  sm-mxp-np /dyn get dup null ne { length 0 gt } { pop false } ifelse sm-mxp-nev /dyn known not and {
+    sm-mxp-nev /dyn sm-mxp-np /dyn get put sm-mxp-np /dyn null put } if
+  sm-mxp-np /words get /n get 0 gt { sm-mxp-nev /annot sm-mxp-np /words get sm-mxp-larr put sm-mxp-np /words sm-mxp-lnew put } if
+  sm-mxp-np /decos get /n get 0 gt {
+    sm-mxp-np /decos get sm-mxp-larr { sm-mxp-nev exch sm-mxp-adddeco } forall sm-mxp-np /decos sm-mxp-lnew put } if
+  sm-mxp-np /hs get null ne { sm-mxp-nev /hairpinStart sm-mxp-np /hs get put sm-mxp-np /hs null put } if
+  sm-mxp-np /he get {
+    sm-mxp-nevs /n get 0 gt { sm-mxp-nevs sm-mxp-llast /hairpinEnd true put } { sm-mxp-nev /hairpinEnd true put } ifelse
+    sm-mxp-np /he false put } if
+  sm-mxp-np /grace get null ne { sm-mxp-nev /grace sm-mxp-np /grace get put sm-mxp-np /grace null put } if
+  sm-mxp-nevs sm-mxp-nev sm-mxp-lpush
+  exit
+} loop } bind def
+
+% evs(list) time sm-mxp-autobeam - : beam eighths and shorter within each
+% beat (a dotted quarter in compound meters, a half in 2/2), breaking at
+% rests. As in the JS, the first short event of a measure gets /beam null.
+/sm-mxp-autobeam {
+  /sm-mxp-abt exch def /sm-mxp-abe exch def
+  sm-mxp-abt /den get 8 eq sm-mxp-abt /num get 3 mod 0 eq and sm-mxp-abt /num get 3 gt and { [3 8] } {
+    sm-mxp-abt /den get 2 eq { [1 2] } { [1 4] } ifelse } ifelse /sm-mxp-abb exch def
+  /sm-mxp-abtt [0 1] def /sm-mxp-abhave false def
+  sm-mxp-abe sm-mxp-larr { /sm-mxp-abv exch def
+    /sm-mxp-abi sm-mxp-abtt 0 get sm-mxp-abb 1 get mul sm-mxp-abtt 1 get sm-mxp-abb 0 get mul idiv def
+    /sm-mxp-abs sm-mxp-abv /kind get (note) eq
+      { sm-mxp-abv /type get dup 0 get 8 mul exch 1 get le } { false } ifelse
+      sm-mxp-abv /spacer known not and def
+    sm-mxp-abv /beam
+      sm-mxp-abs { sm-mxp-abhave { sm-mxp-abps sm-mxp-abpi sm-mxp-abi eq and } { null } ifelse } { false } ifelse put
+    /sm-mxp-abhave true def /sm-mxp-abps sm-mxp-abs def /sm-mxp-abpi sm-mxp-abi def
+    /sm-mxp-abtt sm-mxp-abtt sm-mxp-abv /dur get sm-mxp-fadd def
+  } forall
+} bind def
+
+/sm-mxp-disp << /attributes { sm-mxp-attributes } /backup { sm-mxp-backup } /forward { sm-mxp-forward }
+  /print { sm-mxp-print } /barline { sm-mxp-barline } /harmony { sm-mxp-harmony }
+  /direction { sm-mxp-direction } /note { sm-mxp-note } >> def
+
+% ---------------------------------------------------------------- measures and parts
+/sm-mxp-measure {
+  /sm-mxp-ms [ sm-mxp-ns { sm-mxp-newmeasure } repeat ] def
+  /sm-mxp-cursor [0 1] def
+  /sm-mxp-lastonset sm-mxp-ns array def
+  /sm-mxp-pend [ sm-mxp-ns { << /chord null /dyn null /words sm-mxp-lnew /decos sm-mxp-lnew /hs null /he false /grace null >> } repeat ] def
+  /sm-mxp-ends [ sm-mxp-ns { [0 1] } repeat ] def
+  /sm-mxp-accst [ sm-mxp-ns { 16 dict } repeat ] def
+  sm-mxp-mx /children get { /sm-mxp-el exch def
+    sm-mxp-disp sm-mxp-el /name get sm-mxp-lookup dup null ne { exec } { pop } ifelse
+  } forall
+  0 1 sm-mxp-ns 1 sub { /sm-mxp-ms2 exch def
+    /sm-mxp-mevs sm-mxp-ms sm-mxp-ms2 get /events get def
+    sm-mxp-pend sm-mxp-ms2 get /he get sm-mxp-mevs /n get 0 gt and { sm-mxp-mevs sm-mxp-llast /hairpinEnd true put } if
+    sm-mxp-hasbeams not { sm-mxp-mevs sm-mxp-time sm-mxp-autobeam } if
+    sm-mxp-sms sm-mxp-base sm-mxp-ms2 add sm-mxp-lget sm-mxp-ms sm-mxp-ms2 get sm-mxp-lpush
+  } for
+} bind def
+
+/sm-mxp-dopart {
+  /sm-mxp-pms sm-mxp-part (measure) sm-mxp-kids def
+  /sm-mxp-ns 1 def
+  sm-mxp-pms { (attributes) sm-mxp-kids { (staves) sm-mxp-txt (1) sm-mxp-intd sm-mxp-ns max /sm-mxp-ns exch def } forall } forall
+  /sm-mxp-pid sm-mxp-part (id) sm-mxp-attr dup null eq { pop (undefined) } if def
+  /sm-mxp-base sm-mxp-sms /n get def
+  0 1 sm-mxp-ns 1 sub { /sm-mxp-ps exch def
+    sm-mxp-sms sm-mxp-lnew sm-mxp-lpush
+    sm-mxp-staves << /id sm-mxp-pid (-) sm-mxp-cat sm-mxp-ps 1 add sm-mxp-itoa sm-mxp-cat
+      /name sm-mxp-ps 0 eq sm-mxp-parts length 1 gt and { sm-mxp-pnames sm-mxp-pid sm-mxp-lookup dup null eq { pop () } if } { () } ifelse
+      /clef << /sign (G) /line 2 /octave 0 >> >> sm-mxp-lpush
+  } for
+  sm-mxp-ns 2 eq sm-mxp-parts length 1 eq and { sm-mxp-score /group (brace) put } if
+  /sm-mxp-div 1 def /sm-mxp-fifths 0 def /sm-mxp-time << /num 4 /den 4 >> def
+  /sm-mxp-voiceof sm-mxp-ns array def
+  /sm-mxp-hasbeams false sm-mxp-pms { (note) sm-mxp-kids (beam) sm-mxp-anykid or } forall def
+  0 1 sm-mxp-pms length 1 sub { /sm-mxp-mi exch def /sm-mxp-mx sm-mxp-pms sm-mxp-mi get def sm-mxp-measure } for
+} bind def
+
+% ================================================================ finalisation
+% src/score.js finalizeScore for typed events: the parse's lists become
+% arrays, staves' measures become score measures, empty staves get a
+% whole-measure rest, then measure numbers, endings and tuplet groups.
+/sm-mxp-fixev { % ev -> -
+  dup /notes get sm-mxp-larr 1 index exch /notes exch put
+  dup /decos known { dup /decos get sm-mxp-larr 1 index exch /decos exch put } if
+  dup /lyrics known { dup /lyrics get sm-mxp-larr 1 index exch /lyrics exch put } if
+  dup /grace known { dup /grace get dup /notes get sm-mxp-larr /notes exch put } if
+  pop
+} bind def
+/sm-mxp-finalize {
+  /sm-mxp-fvs sm-mxp-sms sm-mxp-larr def
+  /sm-mxp-fcount 0 sm-mxp-fvs { /n get max } forall def
+  /sm-mxp-fml sm-mxp-lnew def
+  0 1 sm-mxp-fcount 1 sub { /sm-mxp-fmi exch def
+    /sm-mxp-ftop sm-mxp-fvs 0 get sm-mxp-fmi sm-mxp-lat dup null eq { pop sm-mxp-newmeasure } if def
+    /sm-mxp-fm << /staves [ sm-mxp-fvs { sm-mxp-fmi sm-mxp-lat dup null eq { pop [] } {
+          /events get sm-mxp-larr dup { sm-mxp-fixev } forall } ifelse
+        << /events 3 -1 roll >> } forall ]
+      /startRepeat sm-mxp-ftop /startRepeat get
+      /endBar sm-mxp-ftop /endBar get dup null eq { pop (single) } if
+      /lineBreak sm-mxp-ftop /lineBreak get /mmCount 0 >> def
+    sm-mxp-fvs { sm-mxp-fmi sm-mxp-lat dup null eq { pop } { /sm-mxp-fmm exch def
+      sm-mxp-fmm /key known sm-mxp-fm /key known not and { sm-mxp-fm /key sm-mxp-fmm /key get put } if
+      sm-mxp-fmm /time known sm-mxp-fm /time known not and { sm-mxp-fm /time sm-mxp-fmm /time get put } if
+      sm-mxp-fmm /ending known sm-mxp-fm /ending known not and {
+        sm-mxp-fm /ending sm-mxp-fmm /ending get dup length 2 add dict copy put } if
+    } ifelse } forall
+    sm-mxp-fm /clefs [ sm-mxp-fvs { sm-mxp-fmi sm-mxp-lat dup null eq { pop null } {
+      dup /clef known { /clef get } { pop null } ifelse } ifelse } forall ] put
+    sm-mxp-fml sm-mxp-fm sm-mxp-lpush
+  } for
+  /sm-mxp-fma sm-mxp-fml sm-mxp-larr def
+  sm-mxp-score /measures sm-mxp-fma put
+  % a staff that ran short gets whole-measure rests
+  /sm-mxp-ftime sm-mxp-score /initial get /time get def
+  sm-mxp-fma { dup /time known { dup /time get /sm-mxp-ftime exch def } if
+    /staves get { dup /events get length 0 eq {
+      /events [ << /kind (rest) /notes [] /dur sm-mxp-ftime /num get 0 ne { sm-mxp-ftime /num get sm-mxp-ftime /den get sm-mxp-F } { [1 1] } ifelse
+        /type [1 1] /dots 0 /rest << /measure true /count 1 /invisible false >> /beam false >> ] put } { pop } ifelse } forall } forall
+  % numbers: a short first measure is a pickup, number 0
+  /sm-mxp-fn 1 def /sm-mxp-ftime sm-mxp-score /initial get /time get def
+  0 1 sm-mxp-fma length 1 sub { /sm-mxp-fmi exch def /sm-mxp-fm sm-mxp-fma sm-mxp-fmi get def
+    sm-mxp-fm /time known { /sm-mxp-ftime sm-mxp-fm /time get def } if
+    /sm-mxp-fpick false def
+    sm-mxp-fmi 0 eq sm-mxp-ftime /num get 0 ne and {
+      [0 1] sm-mxp-fm /staves get 0 get /events get { /dur get sm-mxp-fadd } forall
+      sm-mxp-ftime /num get sm-mxp-ftime /den get sm-mxp-F sm-mxp-fcmp 0 lt sm-mxp-fma length 1 gt and {
+        sm-mxp-fm /number 0 put sm-mxp-fm /pickup true put /sm-mxp-fpick true def } if } if
+    sm-mxp-fpick not {
+      sm-mxp-fm /number sm-mxp-fn put
+      /sm-mxp-fn sm-mxp-fn sm-mxp-fm /mmCount get 1 max add def } if
+  } for
+  % endings
+  0 1 sm-mxp-fma length 1 sub { /sm-mxp-fmi exch def /sm-mxp-fm sm-mxp-fma sm-mxp-fmi get def
+    sm-mxp-fm /ending known {
+      /sm-mxp-fj sm-mxp-fmi def /sm-mxp-fcl false def
+      { sm-mxp-fj sm-mxp-fma length ge { exit } if
+        /sm-mxp-fmj sm-mxp-fma sm-mxp-fj get def
+        sm-mxp-fj sm-mxp-fmi gt { sm-mxp-fmj /ending known sm-mxp-fmj /startRepeat get or } { false } ifelse {
+          /sm-mxp-fj sm-mxp-fj 1 sub def exit } if
+        /sm-mxp-fb2 sm-mxp-fmj /endBar get def
+        sm-mxp-fb2 (repeat-end) eq { /sm-mxp-fcl true def exit } if
+        sm-mxp-fb2 (double) eq sm-mxp-fb2 (final) eq or sm-mxp-fb2 (thick-thin) eq or {
+          /sm-mxp-fcl sm-mxp-fb2 (final) ne def exit } if
+        sm-mxp-fj sm-mxp-fmi sub 3 ge sm-mxp-fcl not and { exit } if
+        /sm-mxp-fj sm-mxp-fj 1 add def } loop
+      sm-mxp-fj sm-mxp-fma length ge { /sm-mxp-fj sm-mxp-fma length 1 sub def } if
+      sm-mxp-fm /ending get dup /span sm-mxp-fj sm-mxp-fmi sub 1 add put /closed sm-mxp-fcl put
+    } if
+  } for
+  % tuplet groups (a group may run across bar lines)
+  0 1 sm-mxp-fvs length 1 sub { /sm-mxp-fsi exch def /sm-mxp-fprev null def
+    sm-mxp-fma { /staves get sm-mxp-fsi get /events get { /sm-mxp-fev exch def
+      sm-mxp-fev /tuplet known {
+        sm-mxp-fprev null eq { true } { sm-mxp-fprev /tuplet get /id get sm-mxp-fev /tuplet get /id get ne } ifelse
+        { sm-mxp-fev /tuplet get /first true put } { sm-mxp-fprev /tuplet get /last undef } ifelse
+        sm-mxp-fev /tuplet get /last true put
+        /sm-mxp-fprev sm-mxp-fev def
+      } { /sm-mxp-fprev null def } ifelse } forall } forall
+  } for
+} bind def
+
+% ================================================================ the score
+% src sm-mxp-main score   (parseMusicXML)
+/sm-mxp-main {
+  sm-mxp-xml /sm-mxp-doc exch def
+  /sm-mxp-warns sm-mxp-lnew def
+  /sm-mxp-sp sm-mxp-doc (score-partwise) sm-mxp-kid def
+  sm-mxp-sp null eq {
+    sm-mxp-doc (score-timewise) sm-mxp-kid null ne { (score-timewise MusicXML is not supported; export partwise) sm-mxp-fail } if
+    (not a MusicXML score \(no <score-partwise>\)) sm-mxp-fail } if
+  /sm-mxp-meta << /title () /subtitles sm-mxp-lnew /composer () /origin () /area () /rhythm ()
+    /transcriber () /notes [] /history [] /source () /book () /words [] /rights () >> def
+  /sm-mxp-score << /meta sm-mxp-meta /tempo null /staves [] /group null
+    /initial << /key << /fifths 0 >> /time << /num 4 /den 4 >> >> /measures [] >> def
+  /sm-mxp-mt sm-mxp-sp (movement-title) sm-mxp-txt def
+  sm-mxp-meta /title sm-mxp-sp (work) sm-mxp-kid (work-title) sm-mxp-txt dup length 0 eq { pop sm-mxp-mt } if put
+  sm-mxp-meta /title get length 0 gt sm-mxp-mt length 0 gt and { sm-mxp-mt sm-mxp-meta /title get ne } { false } ifelse {
+    sm-mxp-meta /subtitles get sm-mxp-mt sm-mxp-lpush } if
+  /sm-mxp-ident sm-mxp-sp (identification) sm-mxp-kid def
+  sm-mxp-ident (creator) sm-mxp-kids { /sm-mxp-cr exch def
+    /sm-mxp-crt sm-mxp-cr (type) sm-mxp-attr dup null eq { pop () } if def
+    sm-mxp-crt (composer) eq { sm-mxp-meta /composer sm-mxp-cr sm-mxp-ttext put } {
+    sm-mxp-crt (lyricist) eq sm-mxp-crt (poet) eq or { sm-mxp-meta /origin (Words: ) sm-mxp-cr sm-mxp-ttext sm-mxp-cat put } {
+    sm-mxp-crt (arranger) eq { sm-mxp-meta /transcriber (Arr. ) sm-mxp-cr sm-mxp-ttext sm-mxp-cat put } if } ifelse } ifelse
+  } forall
+  % rights: every <rights>, joined with "; "
+  /sm-mxp-rk sm-mxp-ident (rights) sm-mxp-kids def /sm-mxp-rt () def
+  0 1 sm-mxp-rk length 1 sub { dup 0 gt { sm-mxp-rt (; ) sm-mxp-cat /sm-mxp-rt exch def } if
+    sm-mxp-rk exch get sm-mxp-ttext sm-mxp-rt exch sm-mxp-cat /sm-mxp-rt exch def } for
+  sm-mxp-meta /rights sm-mxp-rt put
+  /sm-mxp-pnames 16 dict def
+  sm-mxp-sp (part-list) sm-mxp-kid (score-part) sm-mxp-kids {
+    dup (id) sm-mxp-attr dup null eq { pop (undefined) } if exch (part-name) sm-mxp-txt sm-mxp-pnames 3 1 roll put } forall
+  /sm-mxp-sms sm-mxp-lnew def /sm-mxp-staves sm-mxp-lnew def
+  /sm-mxp-fkey null def /sm-mxp-ftime null def /sm-mxp-tupid 0 def
+  /sm-mxp-parts sm-mxp-sp (part) sm-mxp-kids def
+  sm-mxp-parts { /sm-mxp-part exch def sm-mxp-dopart } forall
+  sm-mxp-fkey null ne { sm-mxp-score /initial get /key sm-mxp-fkey put } if
+  sm-mxp-ftime null ne { sm-mxp-score /initial get /time sm-mxp-ftime put } if
+  sm-mxp-score /staves sm-mxp-staves sm-mxp-larr put
+  sm-mxp-staves /n get 1 gt sm-mxp-score /group get null eq and { sm-mxp-score /group (bracket) put } if
+  sm-mxp-sms /n get 0 gt { sm-mxp-sms 0 sm-mxp-lget dup /n get 0 gt {
+    sm-mxp-llast dup /endBar get null eq { /endBar (final) put } { pop } ifelse } { pop } ifelse } if
+  sm-mxp-sms sm-mxp-larr { sm-mxp-larr { dup /endBar get null eq { /endBar (single) put } { pop } ifelse } forall } forall
+  sm-mxp-meta /subtitles sm-mxp-meta /subtitles get sm-mxp-larr put
+  sm-mxp-finalize
+  sm-mxp-score
+} bind def
+
+% path sm-mxp-readfile text
+/sm-mxp-readfile {
+  (r) file /sm-mxp-rf exch def /sm-mxp-rsb sm-mxp-sbnew def
+  { sm-mxp-rf 65536 string readstring exch sm-mxp-rsb exch sm-mxp-sbputs not { exit } if } loop
+  sm-mxp-rf closefile
+  sm-mxp-rsb sm-mxp-sbstr
+} bind def
+% options sm-mxp-printwarn - : the last parse's warnings, unless /quiet true
+/sm-mxp-printwarn {
+  dup /quiet known { /quiet get true eq } { pop false } ifelse not {
+    sm-musicxml-warnings { (sm-abc: warning: ) print = } forall } if
+} bind def
+
+end % sm-mxp-dict
+
+% ================================================================ public
+/sm-musicxml-warnings [] def
+/sm-musicxml-error null def
+% (xml text) sm-musicxml-parse score
+/sm-musicxml-parse {
+  sm-mxp-dict begin
+  /sm-mxp-errmsg null def
+  mark exch { sm-mxp-main } stopped {
+    cleartomark
+    sm-mxp-errmsg dup null eq { pop (internal error: ) $error /errorname get 64 string cvs sm-mxp-cat } if
+    end
+    userdict /sm-musicxml-error 2 index put
+    userdict /sm-musicxml-warnings [] put
+    (sm-musicxml: ) exch sm-mxp-dict /sm-mxp-cat get exec cvn errordict /syntaxerror get exec
+  } {
+    exch pop sm-mxp-warns sm-mxp-larr end
+    userdict /sm-musicxml-warnings 3 -1 roll put
+    userdict /sm-musicxml-error null put
+  } ifelse
+} bind def
+% (path.musicxml) sm-musicxml-parse-file score
+/sm-musicxml-parse-file { sm-mxp-dict begin sm-mxp-readfile end sm-musicxml-parse } bind def
+% (xml text) [options] sm-musicxml-engrave-string -
+/sm-musicxml-engrave-string {
+  dup type /dicttype eq { dup length 2 add dict copy } { 0 dict } ifelse
+  /sm-abc-engrave where { pop } { (sm-musicxml-engrave-string: sm-abc-engrave is not defined; load lib/sm_abc.ps) = } ifelse
+  % <!-- %%transpose N --> adds to options /transpose; <!-- %%annotation ... -->
+  % lines are drawn unless options has its own (lib/sm_abc_parse.ps reads both)
+  /sm-abc-tune-transpose where {
+    pop 1 index 0 sm-abc-tune-transpose
+    1 index /transpose known { 1 index /transpose get dup null eq { pop 0 } if cvi add } if
+    1 index exch /transpose exch put } if
+  /sm-abc-annotations where { pop dup /annotations known not {
+      1 index 0 sm-abc-annotations dup length 0 gt { 1 index exch /annotations exch put } { pop } ifelse } if } if
+  exch sm-musicxml-parse
+  1 index sm-mxp-dict /sm-mxp-printwarn get exec
+  exch sm-abc-engrave
+} bind def
+% (path.musicxml) [options] sm-musicxml-engrave-file -
+/sm-musicxml-engrave-file {
+  dup type /dicttype eq { } { 0 dict } ifelse exch
+  sm-mxp-dict begin sm-mxp-readfile end
+  exch sm-musicxml-engrave-string
+} bind def
+
+end % userdict
