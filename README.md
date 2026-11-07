@@ -10,10 +10,17 @@ Write a tune in **ABC notation** (or bring **MusicXML**), get an engraved score 
 [pscat notes](https://artcolony.github.io/sheet_music/friction.html).
 
 ```
-ABC / MusicXML ──parse──▶ score model ──layout──▶ PostScript ──pscat──▶ PDF · PNG · SVG
- src/abc.js                src/score.js   src/layout.js   lib/sm_engrave.ps   CLI or WebAssembly
- src/musicxml.js
+one .ps file: lib/*.ps + driver + the ABC text ──pscat──▶ parse ▶ layout ▶ draw ──▶ PDF · PNG · SVG
+               (MusicXML: parsed by src/musicxml.js,      lib/sm_abc_parse.ps          CLI or WebAssembly
+                embedded as a Score literal)               lib/sm_abc.ps, sm_engrave.ps
+                                                ──pscat──▶ sm-abc-performance ──▶ JSON note events ──▶ Web Audio / MIDI (src/play.js)
 ```
+
+The engraver is the PostScript library in [`lib/`](lib/): pscat parses the
+ABC, lays out and draws the score. JavaScript builds the document, plays the
+notes and runs the web page. The original JavaScript layout
+([`src/layout.js`](src/layout.js), `--engine js`) stays as a fallback and as
+the reference the tests compare against, pixel for pixel, on every sample.
 
 - **Deterministic.** Durations are exact rationals; every coordinate is written
   with fixed precision, with no locale or clock involved. The same input gives
@@ -83,8 +90,10 @@ npm run pscat:fetch                      # pscat 0.7.0-rc.4 into vendor/, SHA-25
 node bin/sheet.mjs samples/amazing-grace.abc            # -> samples/amazing-grace.pdf
 node bin/sheet.mjs my-tune.abc -o out/my-tune.pdf --paper a4
 node bin/sheet.mjs my-tune.abc -o my-tune.png --dpi 150 # page PNGs
-node bin/sheet.mjs my-tune.abc -o my-tune.ps            # just the PostScript
-node bin/sheet.mjs song.musicxml --engine wasm -o song.pdf  # same PDF, via WebAssembly
+node bin/sheet.mjs my-tune.abc -o my-tune.ps            # the self-contained PostScript
+node bin/sheet.mjs my-tune.abc -o my-tune.mid           # MIDI, from the notes PostScript plays
+node bin/sheet.mjs song.musicxml --engine ps-wasm -o song.pdf  # same PDF, via WebAssembly
+node bin/sheet.mjs my-tune.abc --engine js -o old.pdf   # the JavaScript layout (fallback)
 ```
 
 Options: `--tune N` (files with several `X:` tunes; `--list` shows them),
@@ -105,15 +114,15 @@ update; the pages pscat drew are untouched and the output stays deterministic.
 From JavaScript:
 
 ```js
-import { toPostScript } from './src/index.js';
-const lib = fs.readFileSync('lib/sm_engrave.ps', 'utf8');
-const { ps, pages, size, warnings } = toPostScript(abcText, { lib, paper: 'a4' });
+import { psEngineDoc } from './bin/sheet.mjs';          // reads lib/*.ps from disk
+const { ps, size } = psEngineDoc(abcText, { paper: 'a4' });
 // then: pscat --pdf out.pdf file.ps, or createRenderer().render(ps, { pdf: true })
+// (in a browser: selfContainedPS from src/psdoc.js, given the lib/*.ps texts)
 ```
 
-### The PostScript engraver (`--engine ps`)
+### The PostScript engraver (the default)
 
-`node bin/sheet.mjs song.abc --engine ps -o song.ps` writes a **self-contained
+`node bin/sheet.mjs song.abc -o song.ps` writes a **self-contained
 PostScript file**: the glyph library, [`lib/sm_abc.ps`](lib/sm_abc.ps) (layout
 in PostScript), a short driver and the ABC source itself, verbatim after
 `currentfile`. pscat lays the music out and draws it; no JavaScript is involved
@@ -122,9 +131,9 @@ in the page. `-o song.pdf` / `.png` / `.svg` render it with the pscat CLI,
 position is rounded to two decimals with `sm-r2`, and the layout uses no
 transcendental operators). The file also carries
 [`lib/sm_abc_parse.ps`](lib/sm_abc_parse.ps), so pscat parses the embedded
-ABC too (tune by `--tune`, `%%annotation` marks included); the Score the JS
-parser wrote (`psLiteral`) is embedded only as a fallback for a file without
-the parser. Both give the same pages.
+ABC too (tune by `--tune`, `%%annotation` marks included). For MusicXML the
+Score the JS parser wrote (`psLiteral`) is embedded instead, until the
+MusicXML parser moves to PostScript as well.
 
 **With pscat alone** (no Node): `pscat --pdf song.pdf --page 612x792 -e
 '(lib/sheet.ps) run (song.abc) sm-abc-engrave-file'`. [`lib/sheet.ps`](lib/sheet.ps)
@@ -141,7 +150,7 @@ run (song.abc) sm-abc-engrave-file` (it loads `lib/sm_abc_parse.ps` itself;
 `(song.abc) << /tune 1 >> sm-abc-engrave-file` for the second tune). See the header
 of `lib/sm_abc.ps`. Transposition runs in PostScript too
 ([`lib/sm_transpose.ps`](lib/sm_transpose.ps), `score semis sm-score-transpose`):
-`--transpose N` and `%%transpose` work with `--engine ps`, and from PostScript
+`--transpose N` and `%%transpose` work, and from PostScript
 `(song.abc) << /transpose 2 >> sm-abc-engrave-file` adds to the file's `%%transpose`.
 
 It covers everything the JS layout draws: title block, tempo, clefs, key and
@@ -149,24 +158,28 @@ time signatures (also mid-line changes), spacing, line and page breaks, stems,
 beams, chords, accidentals, ledger lines, dots, rests, multi-measure rests,
 bars, repeats, voltas, chord symbols, text annotations, decorations, dynamics,
 hairpins, slurs, ties, tuplets, grace notes, lyrics, several staves, the footer
-and `%%annotation` marks; every sample is identical to the JS engraver's at
-300 dpi, or within anti-aliasing.
-Playback/MIDI, share links and the editor's live preview
-stay on the JS engraver, which remains the reference.
+and `%%annotation` marks; every sample's page is pixel-identical to the JS
+engraver's (`tests/ps-engine.test.mjs` checks it at 150 dpi; it was checked at
+600 dpi too). Playback reads the notes from PostScript as well:
+[`lib/sm_perform.ps`](lib/sm_perform.ps) `sm-abc-performance` prints them as
+JSON events (repeats, endings, ties, exact times), and the editor and
+`-o song.mid` only turn them into sound or a MIDI file
+(`tests/ps-perform.test.mjs`: the same events as `src/play.js`).
 
 ## The editor
 
 [`site/editor.html`](site/editor.html) is built into one HTML file
-(`dist/editor.html`) that inlines the engraver, the glyph library, the samples
-and pscat's JavaScript glue, and loads `pscat.wasm` from beside it. It renders
-as you type, shows parse warnings and PostScript errors, and downloads the
-source, a MIDI file or a PDF. **View PS** opens the PostScript the score
-became in a scrolling window: the score part is nothing but calls into the
-glyph library (`x y sm-head-black`, `x y1 y2 sm-stem` …), and clicking any
-`sm-` name jumps to its definition. The gallery's *View PostScript* links
+(`dist/editor.html`) that inlines the PostScript library, the JS modules, the
+samples and pscat's JavaScript glue, and loads `pscat.wasm` from beside it. As
+you type, it puts the ABC into a self-contained PostScript document, which
+pscat's WebAssembly build parses, lays out and draws; it shows the parser's
+warnings and PostScript errors, and downloads the source, a MIDI file or a
+PDF. **View PS** opens that document in a scrolling window (the library, then
+the driver and your ABC), and clicking any `sm-` name jumps to its definition. The gallery's *View PostScript* links
 open the same window ([`site/ps-viewer.js`](site/ps-viewer.js)). **Transpose** moves the score up
 or down (respelled in the new key, chord symbols too). **Play** plays it in the
-browser, with repeats, endings and ties (space bar). **Share link** copies a
+browser, with repeats, endings and ties (space bar); the notes come from
+PostScript (`sm-abc-performance`), JavaScript only makes the sound. **Share link** copies a
 link with the whole score compressed into the part after `#`, so nothing is
 uploaded and anyone with the link sees the same score. **Open** (or drop a
 file) reads `.abc`, `.musicxml`, or a PDF made here. **Annotate** adds a reader's marks (text

@@ -146,10 +146,18 @@ details.help summary { padding: 8px 16px; cursor: pointer; color: var(--muted); 
 <script id="sm-bundle" type="application/json">__SM_BUNDLE__</script>
 <script id="sm-wasm" type="application/octet-stream">__SM_WASM__</script>
 <script type="module">
-// The page carries its own code: the engraver (src/*.js), the PostScript glyph
-// library and the pscat WebAssembly glue are inlined by scripts/build-site.mjs
-// as module sources, loaded here through Blob URLs. The interpreter itself is
-// pscat.wasm, next to this page or (offline edition) inlined, gzipped.
+// The page carries its own code: the PostScript library (lib/*.ps: the
+// engraver), the JavaScript modules (src/*.js) and the pscat WebAssembly glue
+// are inlined by scripts/build-site.mjs, the modules loaded through Blob URLs.
+// The interpreter itself is pscat.wasm, next to this page or (offline
+// edition) inlined, gzipped.
+//
+// What you type goes into a self-contained PostScript document (src/psdoc.js:
+// the library, a short driver, the ABC itself), and pscat parses it, lays it
+// out and draws it; Play and MIDI run the same document with
+// sm-abc-performance, which prints the notes as JSON. JavaScript here only
+// builds that text, shows the pages and makes the sound. (MusicXML is still
+// parsed by src/musicxml.js and embedded as a Score literal.)
 const bundle = JSON.parse(document.getElementById('sm-bundle').textContent);
 const cache = new Map();
 function moduleURL(file) {
@@ -185,12 +193,29 @@ els.transpose.value = '0';
 for (const s of bundle.samples) els.sample.add(new Option(s.title, s.file));
 els.sample.add(new Option('— your draft —', ''), 0);
 
-let engine, renderer, last = null, urls = [];
+let engine, psdoc, renderer, last = null, urls = [];
 const status = (html) => { els.status.innerHTML = html; };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function opts() {
-  return { lib: bundle.lib, transpose: parseInt(els.transpose.value, 10) || 0, paper: els.paper.value, sp: parseFloat(els.size.value), breaks: els.breaks.value, tune: parseInt(els.tune.value || '0', 10) };
+  return { transpose: parseInt(els.transpose.value, 10) || 0, paper: els.paper.value, sp: parseFloat(els.size.value), breaks: els.breaks.value, tune: parseInt(els.tune.value || '0', 10) };
+}
+// The self-contained document for the text: ABC is parsed in PostScript,
+// MusicXML embedded as the JS parser's Score. perform: print the notes instead.
+function documentOf(text, o, perform = false) {
+  const L = bundle.libs;
+  const xml = engine.detectFormat(text) === 'musicxml';
+  return psdoc.selfContainedPS(text, { ...o, engraveLib: L.engrave, abcLib: L.abc, parseLib: L.parse, transposeLib: L.transpose, performLib: L.perform, embedScore: xml, perform });
+}
+// what the PostScript printed: its warnings and errors ("sm-abc: warning: ...")
+const printedLines = (out, kind) => String(out || '').split('\n').filter((l) => l.startsWith(`sm-abc: ${kind}: `)).map((l) => l.slice(10 + kind.length));
+// the playback events of the current text (lib/sm_perform.ps sm-abc-performance)
+function performanceNow() {
+  const o = opts();
+  const out = renderer.render(documentOf(els.src.value, o, true).ps, { width: 8, height: 8 }).output;
+  const line = out.split('\n').reverse().find((l) => l.startsWith('{"'));
+  if (!line) throw Error(printedLines(out, 'error')[0] || 'PostScript printed no notes');
+  return JSON.parse(line);
 }
 
 function render() {
@@ -200,8 +225,11 @@ function render() {
   if (!text.trim()) { els.pages.innerHTML = '<div class="empty">Type or paste ABC or MusicXML on the left.</div>'; status(''); return; }
   const t0 = performance.now();
   let r;
+  const o = opts();
   try {
-    r = engine.toPostScript(text, opts());
+    r = documentOf(text, o);
+    r.tunes = engine.parse(text).scores.map((s) => s.meta.title || 'Untitled');
+    r.annotations = engine.tuneAnnotations(text, o.tune);
   } catch (e) {
     status(`<div class="err">${esc(e.message)}</div>`);
     return;
@@ -216,14 +244,17 @@ function render() {
       els.tune.value = cur && +cur < r.tunes.length ? cur : '0';
     }
   } else { els.tuneWrap.hidden = true; els.tune.innerHTML = ''; }
-  let svgs;
+  let svgs, printed;
   try {
-    renderer.render(r.ps, { width: r.size[0], height: r.size[1], svg: true });
+    printed = renderer.render(r.ps, { width: r.size[0], height: r.size[1], svg: true }).output;
     svgs = renderer.svgPages();
   } catch (e) {
     status(`<div class="err">${esc(e.report || e.message)}</div>`);
     return;
   }
+  // ABC: the PostScript parser's warnings; MusicXML: the JS parser's
+  r.warnings = [...(r.format === 'abc' ? printedLines(printed, 'warning') : r.warnings), ...printedLines(printed, 'error')];
+  r.pages = svgs.length;
   last = r;
   urls.forEach((u) => URL.revokeObjectURL(u));
   urls = svgs.map((s) => URL.createObjectURL(new Blob([s], { type: 'image/svg+xml' })));
@@ -232,7 +263,7 @@ function render() {
   const warn = r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   const annList = r.annotations.length ? `<div class="annots">Annotations (stored as <code>%%annotation</code> lines in the source):<ul>${r.annotations.map((a) => `<li><span class="sw" style="background:${esc(engine.ANNOT_COLORS[a.color] || a.color)}"></span>p.${a.page} ${esc(a.type)}${a.text ? ': ' + esc(a.text) : ''} <button data-del="${a.line}" title="Remove this annotation">remove</button></li>`).join('')}</ul></div>` : '';
   const tr = r.transposed ? ` · transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis} (key signature of ${esc(r.transposed.key)} major)` : '';
-  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')}${tr} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, rendered by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}${annList}`);
+  status(`${esc(r.format === 'musicxml' ? 'MusicXML' : 'ABC')}${tr} · ${r.pages} page${r.pages > 1 ? 's' : ''} · ${ms} ms · <span class="credit">engraved in PostScript by <a href="https://github.com/ArtColony/sheet_music" target="_blank" rel="noopener">sheet_music</a>, run by <a href="https://github.com/PSCatLabs/pscat" target="_blank" rel="noopener">pscat ${esc(bundle.pscat)}</a> (WebAssembly)</span>${warn}${annList}`);
 }
 
 let timer = 0;
@@ -323,8 +354,8 @@ $('dl-src').addEventListener('click', () => {
   const xml = engine && engine.detectFormat(els.src.value) === 'musicxml';
   download(slug() + (xml ? '.musicxml' : '.abc'), els.src.value, xml ? 'application/xml' : 'text/vnd.abc');
 });
-// View PS: the PostScript this score became, in a scrolling window; the
-// score part is all calls into lib/sm_engrave.ps (site/ps-viewer.js)
+// View PS: the PostScript document for this score, in a scrolling window:
+// the library, then the driver and the source it engraves (site/ps-viewer.js)
 let viewer = null;
 $('dl-ps').addEventListener('click', async () => {
   if (!last) return;
@@ -347,8 +378,9 @@ const toast = (msg) => {
 };
 
 // ---------------------------------------------------------------- playback
-// The engraver's performance (src/play.js: repeats, endings, ties, key and
-// accidentals) played on a small Web Audio synth: two oscillators per note.
+// The notes as PostScript plays them (lib/sm_perform.ps: repeats, endings,
+// ties, key and accidentals; exact times) on a small Web Audio synth: two
+// oscillators per note.
 let audio = null, playing = null;
 function stop() {
   if (!playing) return;
@@ -360,7 +392,7 @@ function stop() {
 function play() {
   if (playing) { stop(); return; }
   let perf;
-  try { perf = engine.performanceOf(els.src.value, opts()); } catch (e) { status(`<div class="err">${esc(e.message)}</div>`); return; }
+  try { perf = performanceNow(); } catch (e) { status(`<div class="err">${esc(e.report || e.message)}</div>`); return; }
   if (!perf.notes.length) { toast('Nothing to play'); return; }
   audio = audio || new (window.AudioContext || window.webkitAudioContext)();
   audio.resume();
@@ -397,9 +429,9 @@ document.addEventListener('keydown', (e) => {
 });
 $('dl-midi').addEventListener('click', () => {
   try {
-    const perf = engine.performanceOf(els.src.value, opts());
+    const perf = performanceNow();
     download(slug() + '.mid', engine.midiFile(perf, { title: perf.title }), 'audio/midi');
-  } catch (e) { status(`<div class="err">${esc(e.message)}</div>`); }
+  } catch (e) { status(`<div class="err">${esc(e.report || e.message)}</div>`); }
 });
 
 // ---------------------------------------------------------------- open files
@@ -474,9 +506,10 @@ if (!(await fromHash())) {
 
 try {
   engine = await import(moduleURL('src/index.js'));
+  psdoc = await import(moduleURL('src/psdoc.js'));
   const pscat = await import(moduleURL('engine/index.js'));
   renderer = await pscat.createRenderer({ wasm: await wasmSource() });
-  window.sheetMusic = { engine, renderer, bundle }; // for tests and the curious
+  window.sheetMusic = { engine, psdoc, renderer, bundle, performanceNow, last: () => last }; // for tests and the curious
   render();
 } catch (e) {
   status(`<div class="err">Could not start the pscat engine: ${esc(e.message)}. If you opened this file from disk, use the offline edition (sheet-music-editor-offline.html), which carries the engine inside it.</div>`);

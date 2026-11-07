@@ -203,6 +203,11 @@ export function annotationLine(a, format = 'abc') {
   return format === 'musicxml' ? `<!-- ${body.replace(/--/g, '- -')} -->` : body;
 }
 
+/** The %%annotation marks of tune `tune` (0-based) of a source, lines counted from that tune's X: (as removeAnnotation takes them). */
+export function tuneAnnotations(src, tune = 0) {
+  return parseAnnotations(detectFormat(src) === 'abc' ? splitTunes(src)[tune] || '' : src);
+}
+
 /** Insert an annotation into the source: at the end of tune `tune` (ABC) or before </score-partwise>. */
 export function addAnnotation(src, a, { tune = 0 } = {}) {
   const format = detectFormat(src);

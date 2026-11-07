@@ -15,7 +15,7 @@ import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { parse, finishPDF, parseAnnotations, VERSION } from '../src/index.js';
-import { psEngineDoc, pdfPages, psWarnings, ABC_LIB, PARSE_LIB, TRANSPOSE_LIB } from '../bin/sheet.mjs';
+import { psEngineDoc, pdfPages, psWarnings, ABC_LIB, PARSE_LIB, TRANSPOSE_LIB, PERFORM_LIB } from '../bin/sheet.mjs';
 import { mdToHtml } from './md.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -88,7 +88,9 @@ for (const f of readdirSync(path.join(root, 'src')).filter((x) => x.endsWith('.j
 modules['site/ps-viewer.js'] = readFileSync(path.join(root, 'site/ps-viewer.js'), 'utf8');
 copyFileSync(path.join(root, 'site/ps-viewer.js'), path.join(dist, 'ps-viewer.js'));
 for (const f of ['index.js', 'renderer.js', 'core.js']) modules['engine/' + f] = readFileSync(path.join(npm, f), 'utf8');
-const bundle = { version: VERSION, pscat: pscatVersion, lib: LIB, modules, samples: samples.map(({ file, title, text }) => ({ file, title, text })) };
+// libs: the PostScript library the editor puts into every document it renders
+const libs = { engrave: LIB, abc: ABC_LIB, parse: PARSE_LIB, transpose: TRANSPOSE_LIB, perform: PERFORM_LIB };
+const bundle = { version: VERSION, pscat: pscatVersion, libs, modules, samples: samples.map(({ file, title, text }) => ({ file, title, text })) };
 const editorTpl = readFileSync(path.join(root, 'site/editor.html'), 'utf8');
 const fill = (tpl, wasm) => {
   if (!tpl.includes('__SM_BUNDLE__') || !tpl.includes('__SM_WASM__')) throw Error('site/editor.html lost its placeholders');
