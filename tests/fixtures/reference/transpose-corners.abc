@@ -1,0 +1,11 @@
+X:1
+T:Corners
+M:4/4
+L:1/8
+V:1
+V:2 clef=bass
+K:F#
+[V:1] "F#m7/C#"^^C ^C =C _C __C "Bb/D"^^D ^D =D | "N.C."_D __D ^^E ^E "E♭m7/B♯"=E _E __E ^^F |
+[V:2] "C/G7"^F, =F, _F, __F, "Am  D7"^^G, ^G, =G, _G, | __G, ^^A, ^A, =A, _A, __A, ^^B, ^B, |
+[V:1] [K:Eb] {^^c__d}=B _B __B c d e f g | [K:C#m] "G♯"c' b a g {=f}f e d c |]
+[V:2] [K:Eb] =B,, _B,, __B,, C, D, E, F, G, | [K:C#m] C D E F G A B c |]
