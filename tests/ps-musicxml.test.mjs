@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,10 +29,13 @@ process.on('exit', () => rmSync(tmp, { recursive: true, force: true }));
 const REF = reference('musicxml-parse');
 const META = reference('meta').meta;
 const isXML = (f) => /\.(musicxml|xml)$/.test(f);
-const files = [
-  ...readdirSync(path.join(root, 'samples')).filter(isXML).sort().map((f) => path.join(root, 'samples', f)),
-  ...readdirSync(path.join(root, 'tests/fixtures')).filter(isXML).sort().map((f) => path.join(root, 'tests/fixtures', f)),
-];
+// the files the JS reference was frozen for (a sample added since is covered by
+// the goldens and the explicit-value tests, not here); each must still exist
+const files = Object.keys(REF.files).filter(isXML).map((f) => path.join(root, f));
+test('the frozen files are all still there', () => {
+  assert.equal(files.length, 2);
+  for (const f of files) assert.ok(existsSync(f), f);
+});
 
 // Run a program from a file (not stdin: docs/FRICTION.md #11) with
 // --lint-strict; returns { out, pdf }. pscat's own "pscat: wrote" line is dropped.

@@ -12,7 +12,7 @@ description: Change or extend this repo's music engraver: the ABC/MusicXML parse
 | `lib/sm_abc.ps` | everything visual: columns and spacing, justification, line/page breaks, stems, beams, chords, accidentals, decorations, lyrics, ties, slurs, annotations (names `sm-ae-`) |
 | `lib/sm_abc_parse.ps`, `lib/sm_musicxml.ps` | the parsers: ABC and MusicXML → the Score (model: `docs/postscript-api.md`, "The Score"), also `sm-score-meta` (title, tunes, annotations, warnings as JSON) |
 | `lib/sm_transpose.ps`, `lib/sm_perform.ps` | transposition; the notes as played (JSON events) |
-| `tests/fixtures/reference/` | what the retired JS parsers, `scoreMeta`, `performance()` and `transposeScore` gave (#10): the PostScript is tested against it |
+| `tests/fixtures/reference/` | what the retired JS parsers, `scoreMeta`, `performance()` and `transposeScore` gave (#10) for the samples and fixtures of that time: the PostScript is tested against it (a newer sample is covered by the goldens instead) |
 | `src/frac.js` | exact rational time (MIDI ticks from PostScript's `[num den]` times) |
 | `src/ps.js` | `num()` fixed-precision numbers, `text()` PostScript text literals, `psLiteral()` (any value as PostScript: the options dict) |
 | `src/psdoc.js` | `selfContainedPS()`: DSC header, the libs, a driver and the source (what `sheet` writes); `metaPS()`/`readMeta()` for `sm-score-meta` |

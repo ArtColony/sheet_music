@@ -122,7 +122,8 @@ From JavaScript:
 import { psEngineDoc } from './bin/sheet.mjs';          // reads lib/*.ps from disk
 const { ps, size } = psEngineDoc(abcText, { paper: 'a4' });
 // then: pscat --pdf out.pdf file.ps, or createRenderer().render(ps, { pdf: true })
-// (in a browser: selfContainedPS from src/psdoc.js, given the lib/*.ps texts)
+// (in a browser: selfContainedPS from src/psdoc.js, given the lib/*.ps texts and
+//  meta: readMeta() of what the metaPS() document printed, i.e. sm-score-meta)
 ```
 
 ### The PostScript engraver (the default)

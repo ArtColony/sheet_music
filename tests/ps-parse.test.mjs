@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,10 +21,9 @@ const skip = !existsSync(PSCAT) && 'pscat CLI not installed (npm run pscat:fetch
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-psparse-'));
 process.on('exit', () => rmSync(tmp, { recursive: true, force: true }));
 
-const files = [
-  ...readdirSync(path.join(root, 'samples')).filter((f) => f.endsWith('.abc')).sort().map((f) => path.join(root, 'samples', f)),
-  path.join(root, 'tests/fixtures/parse-edge.abc'),
-];
+// the files the JS reference was frozen for (a sample added since is covered by
+// the goldens and the explicit-value tests, not here); each must still exist
+const files = Object.keys(reference('abc-parse').scores).filter((k) => k.endsWith('.abc')).map((f) => path.join(root, f));
 
 // Write a program to a file and run it (a file, not stdin: see
 // docs/FRICTION.md) with --lint-strict; returns stdout.
@@ -44,6 +43,11 @@ function runPS(call) {
 }
 const REF = reference('abc-parse');
 const expected = (key) => { assert.ok(REF.scores[key], `no reference for ${key}`); return REF.scores[key]; };
+
+test('the frozen files are all still there', () => {
+  assert.equal(files.length, 9);
+  for (const f of files) assert.ok(existsSync(f), f);
+});
 
 for (const file of files) {
   const name = path.relative(root, file);

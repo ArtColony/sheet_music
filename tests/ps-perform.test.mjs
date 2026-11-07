@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,9 @@ const read = (f) => readFileSync(path.join(root, f), 'utf8');
 const REF = reference('perform');
 const XML_SCORES = reference('musicxml-parse').files;
 const CORNERS = 'tests/fixtures/reference/perform-corners.abc';
-const SAMPLES = readdirSync(path.join(root, 'samples')).filter((x) => /\.(abc|musicxml)$/.test(x)).sort().map((f) => `samples/${f}`);
+// the files the JS reference was frozen for (a sample added since is covered by
+// the goldens and the explicit-value tests, not here); each must still exist
+const SAMPLES = [...new Set(Object.keys(REF).filter((l) => l.startsWith('samples/')).map((l) => l.split(' ')[0]))];
 const want = (label) => { assert.ok(REF[label], `no reference for ${label}`); return REF[label]; };
 
 // cases: [label, PostScript operand (text or Score literal), options, reference label]
@@ -56,6 +58,11 @@ function cases() {
   for (const k of semisList) out.push([`corners ${k}`, psLiteral(read(CORNERS)), `<< /transpose ${k} >>`, `${CORNERS} ${k}`]);
   return out;
 }
+
+test('the frozen files are all still there', () => {
+  assert.equal(SAMPLES.length, 9);
+  for (const f of SAMPLES) assert.ok(existsSync(path.join(root, f)), f);
+});
 
 function pscat(prog) {
   const file = path.join(tmp, `p${Math.random().toString(36).slice(2)}.ps`);

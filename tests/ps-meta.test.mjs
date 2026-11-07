@@ -7,7 +7,7 @@
 // and the PDF's metadata.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { metaPS, readMeta, selfContainedPS } from '../src/psdoc.js';
@@ -20,10 +20,9 @@ const LIBS = { abcLib: read('lib/sm_abc.ps'), parseLib: read('lib/sm_abc_parse.p
 const NPM = path.join(root, 'vendor/pscat-npm/node.js');
 const skip = !existsSync(NPM) && 'pscat npm build not installed (npm run pscat:fetch)';
 const REF = reference('meta');
-const files = [
-  ...readdirSync(path.join(root, 'samples')).filter((f) => /\.(abc|musicxml)$/.test(f)).sort().map((f) => `samples/${f}`),
-  ...readdirSync(path.join(root, 'tests/fixtures')).filter((f) => /\.(abc|musicxml)$/.test(f)).sort().map((f) => `tests/fixtures/${f}`),
-];
+// the files the JS reference was frozen for (a sample added since is covered by
+// the goldens and the explicit-value tests, not here); each must still exist
+const files = [...new Set(REF.meta.map((r) => r.file))];
 // numbers as the document writes them (psLiteral: two decimals): PostScript
 // rounds annotation positions and colours to that already
 const norm = (m) => JSON.parse(JSON.stringify(m, (k, v) => (typeof v === 'number' ? Number(psLiteral(v)) : v)));
@@ -33,6 +32,11 @@ const psMeta = async (src, opts) => {
   if (!renderer) renderer = await (await import(NPM)).createRenderer();
   return readMeta(renderer.render(metaPS(src, { ...LIBS, ...opts }), { width: 8, height: 8 }).output);
 };
+
+test('the frozen files are all still there', () => {
+  assert.equal(files.length, 11);
+  for (const f of files) assert.ok(existsSync(path.join(root, f)), f);
+});
 
 test('sm-score-meta equals the JS parser\'s metadata: every sample and fixture, every tune, transposed 0/+2/-5', { skip }, async () => {
   for (const f of files) {
