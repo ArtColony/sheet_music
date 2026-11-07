@@ -15,6 +15,7 @@ own notation. This page lists every public name. The generated
 | [`lib/sm_abc_parse.ps`](../lib/sm_abc_parse.ps) | ABC text → Score dictionary |
 | [`lib/sm_abc.ps`](../lib/sm_abc.ps) | layout and engraving of a Score, the one-liners |
 | [`lib/sm_transpose.ps`](../lib/sm_transpose.ps) | transposition of a Score (loaded by `sheet.ps` when present) |
+| [`lib/sm_perform.ps`](../lib/sm_perform.ps) | playback: the notes as JSON events (loaded by `sheet.ps` when present) |
 
 ## Quick start
 
@@ -42,7 +43,7 @@ leftover stack or unbalanced `gsave`.
 ## Loading: `lib/sheet.ps` and `sm-lib-dir`
 
 `(path/to/sheet.ps) run` loads `sm_engrave.ps`, `sm_abc_parse.ps`,
-`sm_abc.ps` and, if the file exists, `sm_transpose.ps`, all into `userdict`.
+`sm_abc.ps` and, if they exist, `sm_transpose.ps` and `sm_perform.ps`, all into `userdict`.
 pscat cannot tell a program the path of the file it is running, so
 `sheet.ps` looks for its siblings in this order and uses the first directory
 that has `sm_engrave.ps`:
@@ -236,6 +237,50 @@ octave down `-12`.
 | `sm-transpose-fifths-shift` | `semis fifths sm-transpose-fifths-shift df`: the line-of-fifths shift that leaves a key of `fifths` with the fewest accidentals |
 | `sm-transpose-pitch` | `(step) oct alter semis df respell sm-transpose-pitch << /step /oct /alter >>`: move one pitch |
 | `sm-transpose-chord` | `(text) df sm-transpose-chord (text)`: chord symbols, `(Am7) 2` → `(Bm7)`, `(Bb/D) 2` → `(C/E)` |
+
+## Playback: the notes as JSON events
+
+From [`lib/sm_perform.ps`](../lib/sm_perform.ps) (#8), which `sheet.ps`
+loads. `sm-abc-performance` prints what a tune sounds like as one line of
+JSON on stdout, so a program that cannot run PostScript itself (the editor's
+Web Audio player, `src/play.js midiFile`, any MIDI writer) only turns events
+into sound. It is a port of `src/play.js`'s `performance()`, and
+`tests/ps-perform.test.mjs` checks that both give exactly the same events for
+every sample, transposed or not.
+
+- **Repeats** `|: :|` and **1st/2nd endings** (`[1`, `[2`, `[1,3`, `[1-3`)
+  are played out; **ties** join notes, also over bar lines.
+- **Pitch** comes from the key signature and the accidentals carried through
+  the bar, as written; a note tied over the bar keeps its accidental.
+- Grace notes, D.C./D.S., dynamics and articulations are not performed. A
+  multi-measure rest lasts its bars; an empty bar lasts the meter.
+- **Time** is exact: `at`, `dur` and `length` are fractions of a whole note,
+  `[num, den]` reduced, from the start. Seconds = fraction × 4 × 60 / bpm
+  when the beat is a quarter; in general fraction × 60 / (bpm × beat).
+
+| Procedure | Stack |
+|---|---|
+| `sm-abc-performance` | `(abc text) [options] sm-abc-performance –` or `score [options] sm-abc-performance –`: print the JSON line |
+| `sm-abc-performance-file` | `(song.abc) [options] sm-abc-performance-file –`: the same for a file |
+| `sm-score-performance` | `score sm-score-performance dict`: the performance as a dictionary (same keys), printing nothing |
+
+Options are `/tune` (0-based, ABC text) and `/transpose` (semitones; for ABC
+text the tune's `%%transpose` adds to it), as for the engrave procedures. A
+Score dict given directly (e.g. from MusicXML, written by `psLiteral`) is
+transposed in place.
+
+```
+$ pscat --pdf /dev/null -e '(lib/sheet.ps) run (samples/twinkle.abc) sm-abc-performance-file'
+{"length":[12,1],"notes":[{"at":[0,1],"dur":[1,4],"midi":60,"staff":0},{"at":[1,4],"dur":[1,4],"midi":60,"staff":0},...],"staves":1,"tempo":{"beat":[1,4],"bpm":100},"title":"Twinkle, Twinkle, Little Star"}
+```
+
+| Key | Value |
+|---|---|
+| `notes` | `[{ "at": [n,d], "dur": [n,d], "midi": 60, "staff": 0 }, ...]`, sorted by time, then staff, then pitch. `midi` 60 is middle C. `staff` is the staff index: each ABC voice (`V:`) is a staff, so it is also the voice (one MIDI track each) |
+| `length` | `[n,d]`: when the last bar ends |
+| `tempo` | `{ "beat": [1,4], "bpm": 100 }`: from `Q:` (default a quarter = 100) |
+| `staves` | number of staves |
+| `title` | the tune's title (`Untitled` when it has none) |
 
 ## Glyphs and drawing primitives
 
@@ -550,15 +595,15 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (parser), `sm-rb-` (ribbon),
 
 | Name | Kind | Defined in | Source comment |
 |---|---|---|---|
-| `sm-sheet-version` | value | [lib/sheet.ps](../lib/sheet.ps#L50) |  |
-| `sm-sheet-dict` | value | [lib/sheet.ps](../lib/sheet.ps#L51) |  |
-| `sm-lib-dir` | value | [lib/sheet.ps](../lib/sheet.ps#L67) |  |
-| `sm-abc-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L207) |  |
-| `sm-abc-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L211) | [options] sm-abc-engrave-here - |
-| `sm-abc-list-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L215) |  |
-| `sm-abc-list-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L216) |  |
-| `sm-abc-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L217) |  |
-| `sm-abc-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L218) |  |
+| `sm-sheet-version` | value | [lib/sheet.ps](../lib/sheet.ps#L51) |  |
+| `sm-sheet-dict` | value | [lib/sheet.ps](../lib/sheet.ps#L52) |  |
+| `sm-lib-dir` | value | [lib/sheet.ps](../lib/sheet.ps#L68) |  |
+| `sm-abc-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L210) |  |
+| `sm-abc-engrave-here` | proc | [lib/sheet.ps](../lib/sheet.ps#L214) | [options] sm-abc-engrave-here - |
+| `sm-abc-list-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L218) |  |
+| `sm-abc-list-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L219) |  |
+| `sm-abc-check-string` | proc | [lib/sheet.ps](../lib/sheet.ps#L220) |  |
+| `sm-abc-check-file` | proc | [lib/sheet.ps](../lib/sheet.ps#L221) |  |
 | `sm-r2` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L63) |  |
 | `sm-abc-engrave` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1594) |  |
 | `sm-abc-readsrc` | proc | [lib/sm_abc.ps](../lib/sm_abc.ps#L1609) | file (marker) sm-abc-readsrc (text): lines up to one equal to marker (or EOF) |
@@ -661,6 +706,9 @@ private prefixes `sm-ae-` (layout), `sm-abcp-` (parser), `sm-rb-` (ribbon),
 | `sm-annot-text` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L634) | x y t r g b sm-annot-text   -- an italic note, baseline at y |
 | `sm-annot-circle` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L638) | x y w h r g b sm-annot-circle   -- an ellipse drawn inside the box |
 | `sm-annot-highlight` | proc | [lib/sm_engrave.ps](../lib/sm_engrave.ps#L648) | x y w h r g b sm-annot-highlight   -- a pale box, drawn under the music |
+| `sm-score-performance` | proc | [lib/sm_perform.ps](../lib/sm_perform.ps#L307) |  |
+| `sm-abc-performance` | proc | [lib/sm_perform.ps](../lib/sm_perform.ps#L308) |  |
+| `sm-abc-performance-file` | proc | [lib/sm_perform.ps](../lib/sm_perform.ps#L313) |  |
 | `sm-score-transpose` | proc | [lib/sm_transpose.ps](../lib/sm_transpose.ps#L203) |  |
 | `sm-transpose-fifths-shift` | proc | [lib/sm_transpose.ps](../lib/sm_transpose.ps#L204) |  |
 | `sm-transpose-pitch` | proc | [lib/sm_transpose.ps](../lib/sm_transpose.ps#L205) |  |

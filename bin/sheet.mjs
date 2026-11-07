@@ -5,6 +5,7 @@
 //   sheet song.abc -o out.pdf            PDF via the pscat command-line tool
 //   sheet song.abc -o out.png --dpi 150  PNG of page 1 (more pages: out-002.png ...)
 //   sheet song.abc -o out.ps             the self-contained PostScript (engraves itself in pscat)
+//   sheet song.abc -o out.mid            a MIDI file, from the notes PostScript plays (sm-abc-performance)
 //   sheet song.musicxml --paper a4 --engine ps-wasm
 //   sheet song.abc --transpose -2 -o song-in-Bb.pdf
 //   sheet song.abc --engine js -o song.pdf  the JavaScript layout (fallback)
@@ -32,7 +33,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toPostScript, parse, finishPDF, extractSource, isPDF, detectFormat } from '../src/index.js';
+import { toPostScript, parse, finishPDF, extractSource, isPDF, detectFormat, midiFile, performanceOf } from '../src/index.js';
 import { selfContainedPS } from '../src/psdoc.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,6 +42,7 @@ export const ABC_LIB = readFileSync(path.join(root, 'lib/sm_abc.ps'), 'utf8');
 const optional = (f) => (existsSync(path.join(root, 'lib', f)) ? readFileSync(path.join(root, 'lib', f), 'utf8') : null);
 export const PARSE_LIB = optional('sm_abc_parse.ps');
 export const TRANSPOSE_LIB = optional('sm_transpose.ps');
+export const PERFORM_LIB = optional('sm_perform.ps');
 
 /**
  * The self-contained PostScript-engraver document for src (src/psdoc.js):
@@ -50,7 +52,13 @@ export const TRANSPOSE_LIB = optional('sm_transpose.ps');
 export function psEngineDoc(src, opts = {}) {
   const parseLib = opts.noParser ? null : PARSE_LIB;
   const embedScore = opts.embedScore ?? (!parseLib || (opts.format || detectFormat(src)) !== 'abc');
-  return selfContainedPS(src, { ...opts, embedScore, engraveLib: LIB, abcLib: ABC_LIB, parseLib, transposeLib: TRANSPOSE_LIB });
+  return selfContainedPS(src, { ...opts, embedScore, engraveLib: LIB, abcLib: ABC_LIB, parseLib, transposeLib: TRANSPOSE_LIB, performLib: PERFORM_LIB });
+}
+/** The performance JSON line a perform document printed (sm-abc-performance). */
+export function performanceFromOutput(out) {
+  const line = String(out || '').split('\n').reverse().find((l) => l.startsWith('{"'));
+  if (!line) throw Error(`PostScript printed no performance${out ? ': ' + String(out).trim().split('\n').pop() : ''}`);
+  return JSON.parse(line);
 }
 /** Pages in a PDF pscat wrote. */
 export const pdfPages = (pdf) => (Buffer.from(pdf).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
@@ -73,7 +81,7 @@ export const ENGINES = {
 };
 
 function usage(code) {
-  console.error('usage: sheet INPUT [-o OUT.(pdf|png|svg|ps)] [--tune N] [--paper letter|a4] [--staff-space PT] [--breaks source|auto] [--engine ps|ps-wasm|js|js-wasm] [--transpose N] [--dpi N] [--footer TEXT] [--no-source] [--list]\n       sheet SCORE.pdf -o SOURCE.abc     (unpack the source a PDF carries)');
+  console.error('usage: sheet INPUT [-o OUT.(pdf|png|svg|ps|mid)] [--tune N] [--paper letter|a4] [--staff-space PT] [--breaks source|auto] [--engine ps|ps-wasm|js|js-wasm] [--transpose N] [--dpi N] [--footer TEXT] [--no-source] [--list]\n       sheet SCORE.pdf -o SOURCE.abc     (unpack the source a PDF carries)');
   process.exit(code);
 }
 
@@ -125,6 +133,7 @@ async function main(argv) {
   const out = opts.out || input.replace(/\.[^.]+$/, '') + '.pdf';
   const ext = path.extname(out).toLowerCase();
   const psLayout = engine.layout === 'ps';
+  if (ext === '.mid' || ext === '.midi') return writeMidi(src, out, opts, engine);
   const r = psLayout ? psEngineDoc(src, opts) : toPostScript(src, { ...opts, lib: LIB });
   // The PostScript engraver parses ABC itself and prints its warnings as it
   // runs (relayed below). The JS parser's are shown for MusicXML, for the JS
@@ -162,6 +171,32 @@ async function main(argv) {
   if (psLayout) for (const w of psWarnings(printed)) console.error(`sheet: warning: ${w}`);
   const notes = [pages ? `${pages} page${pages > 1 ? 's' : ''}` : '', transposedNote(r)].filter(Boolean).join(', ');
   console.error(`sheet: wrote ${out}${notes ? ` (${notes})` : ''}, ${psLayout ? 'PostScript' : 'JS'} engraver`);
+}
+
+// .mid: the notes as PostScript plays them (lib/sm_perform.ps) into a
+// Standard MIDI File (src/play.js midiFile); --engine js uses src/play.js.
+async function writeMidi(src, out, opts, engine) {
+  let perf;
+  if (engine.layout === 'js') perf = performanceOf(src, opts);
+  else {
+    const doc = psEngineDoc(src, { ...opts, perform: true });
+    let printed;
+    if (engine.render === 'wasm') {
+      const { createRenderer } = await import(path.join(root, 'vendor/pscat-npm/node.js'));
+      printed = (await createRenderer()).render(doc.ps, { width: 8, height: 8 }).output;
+    } else {
+      const tmp = mkdtempSync(path.join(os.tmpdir(), 'sheet-'));
+      try {
+        const psFile = path.join(tmp, 'perform.ps');
+        writeFileSync(psFile, doc.ps);
+        printed = execFileSync(pscatPath(), ['--page', '8x8', '--pdf', path.join(tmp, 'blank.pdf'), psFile], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 256 << 20 });
+      } finally { rmSync(tmp, { recursive: true, force: true }); }
+    }
+    perf = performanceFromOutput(printed);
+  }
+  mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  writeFileSync(out, midiFile(perf, { title: perf.title }));
+  console.error(`sheet: wrote ${out} (${perf.notes.length} notes, ${perf.staves} track${perf.staves > 1 ? 's' : ''})`);
 }
 
 const transposedNote = (r) => (r.transposed ? `transposed ${r.transposed.semis > 0 ? '+' : ''}${r.transposed.semis}: key signature of ${r.transposed.key} major` : '');

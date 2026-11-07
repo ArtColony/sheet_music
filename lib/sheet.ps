@@ -7,6 +7,7 @@
 %   sm_abc_parse.ps  the ABC parser (sm-abc-parse, sm-abc-warnings, ...)
 %   sm_abc.ps        layout and engraving (sm-abc-engrave, sm-abc-engrave-file, ...)
 %   sm_transpose.ps  transposition (sm-score-transpose, the /transpose option), if present
+%   sm_perform.ps    playback events as JSON (sm-abc-performance), if present
 % and defines the agent-facing helpers below. Reference: docs/postscript-api.md.
 %
 % Finding the library. pscat cannot tell a program the path of the file it
@@ -85,6 +86,8 @@ sm-lib-dir (sm_abc_parse.ps) sm-sheet-dict /sm-sh-cat get exec run
 sm-lib-dir (sm_abc.ps) sm-sheet-dict /sm-sh-cat get exec run
 % optional: run outside stopped, so an error inside it is reported as usual
 sm-lib-dir (sm_transpose.ps) sm-sheet-dict /sm-sh-cat get exec
+dup sm-sheet-dict /sm-sh-exists get exec { run } { pop } ifelse
+sm-lib-dir (sm_perform.ps) sm-sheet-dict /sm-sh-cat get exec   % sm-abc-performance, if present
 dup sm-sheet-dict /sm-sh-exists get exec { run } { pop } ifelse
 currentdict /sm-sh-dir undef
 
